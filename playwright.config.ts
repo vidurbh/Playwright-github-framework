@@ -29,9 +29,9 @@ export default defineConfig({
     baseURL: 'https://dummyjson.com',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
-    trace:'on-first-retry',
-    video:'on-first-retry',
-    screenshot:'only-on-failure',
+    trace:'on',
+    video:'on',
+    screenshot:'on',
 
 
     ignoreHTTPSErrors: true,
