@@ -128,9 +128,8 @@ This project uses GitHub Actions to:
 
 Add screenshots here:
 
-* GitHub Actions passing build
-* Playwright HTML report
-
+![alt text](image.png)
+![Test Report](docs/images/report.png)
 ---
 
 ## Key Learnings
