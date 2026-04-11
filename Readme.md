@@ -128,7 +128,7 @@ This project uses GitHub Actions to:
 
 
 ![alt text](docs/images/CI-passed.png)
-![Test Report](docs/images/report.png)
+![Test Report](docs/images/Reports.png)
 ---
 
 ## Key Learnings
