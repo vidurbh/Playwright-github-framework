@@ -126,9 +126,8 @@ This project uses GitHub Actions to:
 
 ## Sample Output
 
-Add screenshots here:
 
-![alt text](image.png)
+![alt text](docs/images/CI-passed.png)
 ![Test Report](docs/images/report.png)
 ---
 
