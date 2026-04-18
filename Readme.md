@@ -124,7 +124,7 @@ This project uses GitHub Actions to:
 
 ---
 
-## Sample Output
+## Sample Output 
 
 
 ![alt text](docs/images/CI-passed.png)
