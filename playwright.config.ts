@@ -23,9 +23,8 @@ export default defineConfig({
   workers: 1,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
    reporter: [
-    ['html'],
-    ['json', { outputFile: 'playwright-report.json' }]
-  ],
+     ['html', { outputFolder: 'playwright-report' }],
+    ['json', { outputFile: 'playwright-report.json' }] ],
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('')`. */
