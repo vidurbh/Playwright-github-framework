@@ -77,18 +77,41 @@ jobs:
       id: deployment
       uses: actions/deploy-pages@v4
 
-  slack-notification:
+    slack-notification:
     if: always()
     needs: deploy
 
     runs-on: ubuntu-latest
 
     steps:
-    - name: Send Slack Notification
+    - name: Send Start Message
+      id: slack_start
       run: |
-        curl -X POST \
-        -H 'Content-type: application/json' \
-        --data '{
-          "text":"🚀 Playwright Test Run Completed\n\n✅ Status: SUCCESS\n\n📊 HTML Report:\nhttps://vidurbh.github.io/Playwright-github-framework/"
-        }' \
-        ${{ secrets.SLACK_WEBHOOK_URL }}
+        response=$(curl -s -X POST https://slack.com/api/chat.postMessage \
+          -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
+          -H "Content-type: application/json" \
+          --data '{
+            "channel":"${{ secrets.SLACK_CHANNEL_ID }}",
+            "text":"🚀 Playwright Test Run Started..."
+          }')
+
+        echo "$response"
+
+        ts=$(echo $response | jq -r '.ts')
+
+        echo "SLACK_TS=$ts" >> $GITHUB_ENV
+
+    - name: Wait Simulation
+      run: sleep 5
+
+    - name: Update Slack Message
+      if: always()
+      run: |
+        curl -X POST https://slack.com/api/chat.update \
+          -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
+          -H "Content-type: application/json" \
+          --data '{
+            "channel":"${{ secrets.SLACK_CHANNEL_ID }}",
+            "ts":"'"$SLACK_TS"'",
+            "text":"✅ Playwright Test Run Completed\n\n📊 HTML Report:\nhttps://vidurbh.github.io/Playwright-github-framework/"
+          }'
