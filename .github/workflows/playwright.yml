@@ -43,6 +43,12 @@ jobs:
         SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
         SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
 
+    - name: Verify report folder
+      if: always()
+      run: |
+        ls -R
+        mkdir -p playwright-report    
+
     - name: Upload report
       if: always()
       uses: actions/upload-pages-artifact@v3
