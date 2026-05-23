@@ -3,24 +3,16 @@ name: Playwright Tests
 on:
   push:
     branches: [ main, master ]
-
   pull_request:
     branches: [ main, master ]
-
   schedule:
     - cron: '30 3 * * *'
-
   workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
 
 jobs:
   test:
-    timeout-minutes: 60
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
     - uses: actions/checkout@v4
@@ -29,91 +21,30 @@ jobs:
       with:
         node-version: lts/*
 
-    - name: Install jq
-      run: sudo apt-get update && sudo apt-get install -y jq
-
-    - name: Send Start Message
-      id: slack_start
-      run: |
-        response=$(curl -s -X POST https://slack.com/api/chat.postMessage \
-          -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
-          -H "Content-type: application/json" \
-          --data '{
-            "channel":"${{ secrets.SLACK_CHANNEL_ID }}",
-            "text":"🚀 Playwright Test Run Started..."
-          }')
-
-        echo "Slack response:"
-        echo "$response"
-
-        ts=$(echo "$response" | jq -r '.ts')
-
-        echo "SLACK_TS=$ts" >> $GITHUB_ENV
-
-    - uses: actions/setup-node@v4
-      with:
-        node-version: lts/*
-
     - name: Install dependencies
       run: npm ci
 
-    - name: Install Playwright Browsers
+    - name: Install browsers
       run: npx playwright install --with-deps
 
-    - name: Run Playwright tests
-      run: npx playwright test --project=chromium --reporter=html
+    - name: Run tests
+      run: node scripts/run-tests.js
+      env:
+        CI: true
 
-    - name: Upload Playwright Report Artifact
+    - name: Parse results
       if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: playwright-report
-        path: playwright-report/
-        retention-days: 30
+      run: node scripts/parse-results.js
 
-    - name: Upload test results
+    - name: Slack notification
       if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results
-        path: test-results/
+      run: node scripts/slack-notify.js
+      env:
+        SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
 
-    - name: Copy Playwright assets
-      if: always()
-      run: |
-        mkdir -p playwright-report/data
-        cp -r test-results/* playwright-report/data/ || true
-
-    - name: Upload GitHub Pages artifact
+    - name: Upload report
       if: always()
       uses: actions/upload-pages-artifact@v3
       with:
         path: playwright-report/
-
-    - name: Update Slack Message
-      if: always()
-      run: |
-        echo "Using TS: $SLACK_TS"
-
-        curl -X POST https://slack.com/api/chat.update \
-          -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
-          -H "Content-type: application/json" \
-          --data '{
-            "channel":"${{ secrets.SLACK_CHANNEL_ID }}",
-            "ts":"'"$SLACK_TS"'",
-            "text":"✅ Playwright Test Run Completed\n\n📊 HTML Report:\nhttps://vidurbh.github.io/Playwright-github-framework/"
-          }'
-
-  deploy:
-    if: always()
-    needs: test
-
-    runs-on: ubuntu-latest
-
-    environment:
-      name: github-pages
-
-    steps:
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v4
