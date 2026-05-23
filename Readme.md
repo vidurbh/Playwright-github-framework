@@ -138,6 +138,8 @@ This project uses GitHub Actions to:
 * Using fixtures for dependency injection
 * Debugging tests using Playwright traces
 * Integrating CI/CD pipelines
+* Cron is also setup
+
 
 ---
 
