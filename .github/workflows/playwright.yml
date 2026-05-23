@@ -86,14 +86,9 @@ jobs:
     steps:
     - name: Send Slack Notification
       run: |
-        curl -X POST -H 'Content-type: application/json' \
-        --data "{
-          \"text\": \"🚀 Playwright Test Run Completed
-
-          ✅ Status: SUCCESS
-
-          📊 HTML Report:
-          https://vidurbh.github.io/Playwright-github-framework/
-
-        }" \
+        curl -X POST \
+        -H 'Content-type: application/json' \
+        --data '{
+          "text":"🚀 Playwright Test Run Completed\n\n✅ Status: SUCCESS\n\n📊 HTML Report:\nhttps://vidurbh.github.io/Playwright-github-framework/"
+        }' \
         ${{ secrets.SLACK_WEBHOOK_URL }}
