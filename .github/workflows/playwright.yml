@@ -29,6 +29,9 @@ jobs:
       with:
         node-version: lts/*
 
+    - name: Install jq
+      run: sudo apt-get update && sudo apt-get install -y jq
+
     - name: Send Start Message
       id: slack_start
       run: |
@@ -40,9 +43,10 @@ jobs:
             "text":"🚀 Playwright Test Run Started..."
           }')
 
+        echo "Slack response:"
         echo "$response"
 
-        ts=$(echo $response | jq -r '.ts')
+        ts=$(echo "$response" | jq -r '.ts')
 
         echo "SLACK_TS=$ts" >> $GITHUB_ENV
 
