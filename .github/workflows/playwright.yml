@@ -92,6 +92,8 @@ jobs:
     - name: Update Slack Message
       if: always()
       run: |
+        echo "Using TS: $SLACK_TS"
+
         curl -X POST https://slack.com/api/chat.update \
           -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
           -H "Content-type: application/json" \
