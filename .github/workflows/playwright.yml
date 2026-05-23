@@ -45,3 +45,21 @@ jobs:
       with:
         name: test-results
         path: test-results/
+
+
+    - name: Send Slack Notification
+      if: always()
+      run: |
+        curl -X POST -H 'Content-type: application/json' \
+        --data "{
+          \"text\": \"🚀 Playwright Test Run Completed
+          
+          ✅ Status: ${{ job.status }}
+          📦 Repository: ${{ github.repository }}
+          🌿 Branch: ${{ github.ref_name }}
+
+          🔗 Run URL:
+          https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          \"
+        }" \
+        ${{ secrets.SLACK_WEBHOOK_URL }}
