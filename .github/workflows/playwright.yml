@@ -52,6 +52,10 @@ jobs:
       with:
         name: test-results
         path: test-results/
+    - name: Merge test results into report
+      if: always()
+      run: |
+        cp -r test-results playwright-report/test-results || true    
 
     - name: Upload GitHub Pages artifact
       if: always()
