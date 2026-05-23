@@ -8,9 +8,14 @@ on:
     branches: [ main, master ]
 
   schedule:
-    - cron: '30 3 * * *'   # Daily at 9:00 AM IST
+    - cron: '30 3 * * *'
 
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
 jobs:
   test:
@@ -33,32 +38,60 @@ jobs:
     - name: Run Playwright tests
       run: npx playwright test --project=chromium --reporter=html
 
-    - uses: actions/upload-artifact@v4
-      if: ${{ !cancelled() }}
+    - name: Upload Playwright Report Artifact
+      if: always()
+      uses: actions/upload-artifact@v4
       with:
         name: playwright-report
         path: playwright-report/
         retention-days: 30
 
-    - uses: actions/upload-artifact@v4
-      if: ${{ always() }}
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
       with:
         name: test-results
         path: test-results/
 
-
-    - name: Send Slack Notification
+    - name: Upload GitHub Pages artifact
       if: always()
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: playwright-report/
+
+  deploy:
+    if: always()
+    needs: test
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
+
+  slack-notification:
+    if: always()
+    needs: deploy
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Send Slack Notification
       run: |
         curl -X POST -H 'Content-type: application/json' \
         --data "{
           \"text\": \"🚀 Playwright Test Run Completed
-          
-          ✅ Status: ${{ job.status }}
-          📦 Repository: ${{ github.repository }}
-          🌿 Branch: ${{ github.ref_name }}
 
-          🔗 Run URL:
+          ✅ Status: SUCCESS
+
+          📊 HTML Report:
+          https://vidurbh.github.io/Playwright-github-framework/
+
+          🔗 Workflow Run:
           https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           \"
         }" \
