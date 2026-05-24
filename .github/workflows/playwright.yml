@@ -24,6 +24,9 @@ jobs:
       with:
         node-version: lts/*
 
+    - name: Slack Start
+      run: node scripts/slack-notify.js start
+      
     - name: Install dependencies
       run: npm ci
 
