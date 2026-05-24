@@ -24,14 +24,14 @@ jobs:
       with:
         node-version: lts/*
 
+    - name: Install dependencies
+      run: npm ci
+
     - name: Slack Start
       run: node scripts/slack-notify.js start
       env:
         SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-        SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
-
-    - name: Install dependencies
-      run: npm ci
+        SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}  
 
     - name: Install browsers
       run: npx playwright install --with-deps
@@ -45,12 +45,12 @@ jobs:
       if: always()
       run: node scripts/parse-results.js
 
-    - name: Slack notification
-      if: always()
-      run: node scripts/slack-notify.js
-      env:
-        SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-        SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+    name: Slack Complete
+    if: always()
+    run: node scripts/slack-notify.js complete
+    env:
+    SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+    SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
 
     - name: Verify report folder
       if: always()
