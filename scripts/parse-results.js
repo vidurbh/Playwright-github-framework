@@ -73,8 +73,7 @@ artifactUrl = await uploadFile(
     duration,
     branch,
     commit_sha,
-    report_url: reportUrl,
-    artifact_url: artifactUrl
+    report_url:'https://vidurbh.github.io/Playwright-github-framework/'
   };
 
   console.log('💾 Saving to Supabase:', runData);
