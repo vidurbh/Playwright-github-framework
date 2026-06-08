@@ -8,6 +8,8 @@ const supabase = require('./supabase');
 
 const WORKFLOW_ID = 259296608;
 
+/* ---------------- MIDDLEWARE ---------------- */
+
 app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -16,9 +18,13 @@ app.use(cors({
 
 app.use(express.json());
 
+/* ---------------- HEALTH CHECK ---------------- */
+
 app.get('/', (req, res) => {
   res.json({ status: 'Backend running' });
 });
+
+/* ---------------- TRIGGER GITHUB WORKFLOW ---------------- */
 
 app.post('/trigger-tests', async (req, res) => {
   try {
@@ -38,24 +44,18 @@ app.post('/trigger-tests', async (req, res) => {
     );
 
     if (!response.ok) {
-  const errorText = await response.text();
+      const errorText = await response.text();
 
-  console.log("GITHUB STATUS:", response.status);
-  console.log("GITHUB ERROR:", errorText);
-
-  return res.status(500).json({
-    success: false,
-    error: errorText
-  });
-}
+      console.log("GITHUB STATUS:", response.status);
+      console.log("GITHUB ERROR:", errorText);
 
       return res.status(500).json({
         success: false,
-        error
+        error: errorText
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Workflow triggered successfully'
     });
@@ -63,12 +63,14 @@ app.post('/trigger-tests', async (req, res) => {
   } catch (err) {
     console.error('Trigger error:', err);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: err.message
     });
   }
 });
+
+/* ---------------- TEST RUNS FROM SUPABASE ---------------- */
 
 app.get('/test-runs', async (req, res) => {
   try {
@@ -85,7 +87,7 @@ app.get('/test-runs', async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       runs: data
     });
@@ -93,12 +95,14 @@ app.get('/test-runs', async (req, res) => {
   } catch (err) {
     console.error('Supabase error:', err);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: err.message
     });
   }
 });
+
+/* ---------------- START SERVER ---------------- */
 
 console.log('TEST RUN ROUTE REGISTERED');
 
