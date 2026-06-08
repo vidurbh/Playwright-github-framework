@@ -38,8 +38,8 @@ jobs:
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
 
       - name: Install browsers
-        run: npx playwright install --with-deps
-
+        run: npx playwright install chromium
+        
       - name: Run tests
         run: node scripts/run-tests.js
         env:
