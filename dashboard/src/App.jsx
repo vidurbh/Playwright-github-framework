@@ -7,7 +7,7 @@ function App() {
 
   const fetchRuns = async () => {
     try {
-      const response = await fetch('http://localhost:7000/test-runs');
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/test-runs`);
 
       const data = await response.json();
 

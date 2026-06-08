@@ -6,11 +6,14 @@ const cors = require('cors');
 const app = express();
 const supabase = require('./supabase');
 
+const WORKFLOW_ID = 259296608;
+
 app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
 app.use(express.json());
 
 app.get('/', (req, res) => {
@@ -20,7 +23,7 @@ app.get('/', (req, res) => {
 app.post('/trigger-tests', async (req, res) => {
   try {
     const response = await fetch(
-      `https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/actions/workflows/playwright.yml/dispatches`,
+      `https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/actions/workflows/${WORKFLOW_ID}/dispatches`,
       {
         method: 'POST',
         headers: {
@@ -47,8 +50,9 @@ app.post('/trigger-tests', async (req, res) => {
       success: true,
       message: 'Workflow triggered successfully'
     });
+
   } catch (err) {
-    console.error(err);
+    console.error('Trigger error:', err);
 
     res.status(500).json({
       success: false,
@@ -61,13 +65,11 @@ app.get('/test-runs', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('test_runs')
-      .select('*');
-
-    console.log('SUPABASE DATA:', data);
+      .select('*')
+      .order('id', { ascending: false })
+      .limit(10);
 
     if (error) {
-      console.log(error);
-
       return res.status(500).json({
         success: false,
         error: error.message
@@ -78,8 +80,9 @@ app.get('/test-runs', async (req, res) => {
       success: true,
       runs: data
     });
+
   } catch (err) {
-    console.log(err);
+    console.error('Supabase error:', err);
 
     res.status(500).json({
       success: false,
@@ -90,9 +93,8 @@ app.get('/test-runs', async (req, res) => {
 
 console.log('TEST RUN ROUTE REGISTERED');
 
+const PORT = process.env.PORT || 7000;
 
-app.listen(7000, () => {
-  console.log('Server running on port 7000');
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
-
-
