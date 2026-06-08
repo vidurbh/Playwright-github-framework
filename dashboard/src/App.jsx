@@ -25,11 +25,11 @@ function App() {
       setMessage('');
 
       const response = await fetch(
-        'http://localhost:7000/trigger-tests',
-        {
-          method: 'POST'
-        }
-      );
+      `${import.meta.env.VITE_API_URL}/trigger-tests`,
+      {
+        method: 'POST'
+      }
+    );
 
       const data = await response.json();
 
