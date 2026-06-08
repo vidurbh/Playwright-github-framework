@@ -39,10 +39,10 @@ jobs:
       - name: Show Playwright version
         run: npx playwright --version
 
-      - name: Check system Chrome
+      - name: Playwright debug
         run: |
-          which google-chrome || true
-          google-chrome --version || true
+          npx playwright --version
+          npx playwright install --dry-run
       - name: Run tests
         run: node scripts/run-tests.js
         env:
