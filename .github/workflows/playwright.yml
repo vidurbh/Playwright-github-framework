@@ -39,10 +39,8 @@ jobs:
       - name: Show Playwright version
         run: npx playwright --version
 
-      - name: Playwright debug
-        run: |
-          npx playwright --version
-          npx playwright install --dry-run
+      - name: Install browsers
+        run: PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 npx playwright install chromium
       - name: Run tests
         run: node scripts/run-tests.js
         env:
