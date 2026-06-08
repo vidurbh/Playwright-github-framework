@@ -38,7 +38,16 @@ app.post('/trigger-tests', async (req, res) => {
     );
 
     if (!response.ok) {
-      const error = await response.text();
+  const errorText = await response.text();
+
+  console.log("GITHUB STATUS:", response.status);
+  console.log("GITHUB ERROR:", errorText);
+
+  return res.status(500).json({
+    success: false,
+    error: errorText
+  });
+}
 
       return res.status(500).json({
         success: false,
