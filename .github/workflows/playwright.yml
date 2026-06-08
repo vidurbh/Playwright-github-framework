@@ -37,9 +37,9 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
 
-      - name: Install browsers
-        run: npx playwright install chromium
-        
+      - name: Show Playwright version
+        run: npx playwright --version
+
       - name: Run tests
         run: node scripts/run-tests.js
         env:
