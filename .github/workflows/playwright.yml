@@ -40,8 +40,10 @@ jobs:
       - name: Show Playwright version
         run: npx playwright --version
 
-      - name: Install browsers
-        run: npx playwright install chromium --only-shell
+      - name: Check system Chrome
+        run: |
+          which google-chrome || true
+          google-chrome --version || true
       - name: Run tests
         run: node scripts/run-tests.js
         env:
