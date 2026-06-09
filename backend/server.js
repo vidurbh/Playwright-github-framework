@@ -137,3 +137,56 @@ const PORT = process.env.PORT || 7000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+app.post('/sessions', async (req, res) => {
+  try {
+    const { model, prompt } = req.body;
+
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .insert([
+        {
+          model,
+          prompt,
+          status: 'created'
+        }
+      ])
+      .select();
+
+    if (error) {
+      return res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+
+    res.json({
+      success: true,
+      session: data[0]
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+app.get('/sessions', async (req, res) => {
+  const { data, error } = await supabase
+    .from('chat_sessions')
+    .select('*')
+    .order('id', { ascending: false });
+
+  if (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+
+  res.json({
+    success: true,
+    sessions: data
+  });
+});
