@@ -190,3 +190,69 @@ app.get('/sessions', async (req, res) => {
     sessions: data
   });
 });
+
+/* ---------------- SESSION MESSAGES ---------------- */
+
+app.get('/sessions/:id/messages', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const { data, error } = await supabase
+      .from('session_messages')
+      .select('*')
+      .eq('session_id', id)
+      .order('id', { ascending: true });
+
+    if (error) {
+      return res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+
+    res.json({
+      success: true,
+      messages: data
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+app.post('/sessions/:id/messages', async (req, res) => {
+  const { id } = req.params;
+  const { content, role } = req.body;
+
+  try {
+    const { data, error } = await supabase
+      .from('session_messages')
+      .insert([
+        {
+          session_id: id,
+          content,
+          role: role || 'user'
+        }
+      ])
+      .select();
+
+    if (error) {
+      return res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+
+    res.json({
+      success: true,
+      message: data[0]
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
