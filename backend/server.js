@@ -31,6 +31,12 @@ app.post('/trigger-tests', async (req, res) => {
     console.log("OWNER:", process.env.GITHUB_OWNER);
     console.log("REPO:", process.env.GITHUB_REPO);
     console.log("WORKFLOW_ID:", WORKFLOW_ID);
+    console.log("TOKEN EXISTS:", !!process.env.GITHUB_TOKEN);
+    console.log("TOKEN LENGTH:", process.env.GITHUB_TOKEN?.length);
+    console.log(
+      "TOKEN PREFIX:",
+      process.env.GITHUB_TOKEN?.substring(0, 10)
+    );
     const response = await fetch(
       `https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/actions/workflows/${WORKFLOW_ID}/dispatches`,
       {
