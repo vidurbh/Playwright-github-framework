@@ -28,6 +28,9 @@ app.get('/', (req, res) => {
 
 app.post('/trigger-tests', async (req, res) => {
   try {
+    console.log("OWNER:", process.env.GITHUB_OWNER);
+    console.log("REPO:", process.env.GITHUB_REPO);
+    console.log("WORKFLOW_ID:", WORKFLOW_ID);
     const response = await fetch(
       `https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/actions/workflows/${WORKFLOW_ID}/dispatches`,
       {
