@@ -105,6 +105,23 @@ app.get('/test-runs', async (req, res) => {
   }
 });
 
+/* ---------------- DEBUG WORKFLOWS ---------------- */
+
+app.get('/debug-workflows', async (req, res) => {
+  const response = await fetch(
+    `https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/actions/workflows`,
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json'
+      }
+    }
+  );
+
+  const data = await response.json();
+  res.json(data);
+});
+
 /* ---------------- START SERVER ---------------- */
 
 console.log('TEST RUN ROUTE REGISTERED');
