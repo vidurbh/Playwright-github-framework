@@ -11,6 +11,12 @@ on:
     - cron: '30 3 * * *'
 
   workflow_dispatch:
+    inputs:
+      org_id:
+        description: 'Organization ID to associate test run with'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   test:
@@ -49,6 +55,8 @@ jobs:
       - name: Parse results
         if: always()
         run: node scripts/parse-results.js
+        env:
+          ORG_ID: ${{ github.event.inputs.org_id || '' }}
 
       - name: Slack Complete
         if: always()

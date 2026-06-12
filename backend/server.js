@@ -36,10 +36,32 @@ app.get('/', (req, res) => {
 
 app.post('/trigger-tests', async (req, res) => {
   try {
+    const { org_id } = req.body;
     console.log("OWNER:", process.env.GITHUB_OWNER);
     console.log("REPO:", process.env.GITHUB_REPO);
     console.log("WORKFLOW_ID:", WORKFLOW_ID);
     console.log("TOKEN EXISTS:", !!process.env.GITHUB_TOKEN);
+    console.log("ORG_ID:", org_id);
+
+    // Save a pending run with org_id BEFORE triggering
+    // This way parse-results can look it up later
+    const pendingRunData = {
+      status: 'triggered',
+      triggered_at: new Date().toISOString()
+    };
+    if (org_id) {
+      pendingRunData.org_id = org_id;
+    }
+    const { data: pendingRun, error: pendingError } = await supabase
+      .from('test_runs')
+      .insert([pendingRunData])
+      .select();
+
+    if (pendingError) {
+      console.error('Pending run save error:', pendingError.message);
+    } else {
+      console.log('✅ Pending run saved with id:', pendingRun?.[0]?.id, 'org_id:', org_id);
+    }
 
     const response = await fetch(
       `https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/actions/workflows/${WORKFLOW_ID}/dispatches`,
@@ -68,15 +90,271 @@ app.post('/trigger-tests', async (req, res) => {
   }
 });
 
+/* ================================================================
+   ORGS MANAGEMENT (Admin Panel)
+   ================================================================ */
+
+/* ---------- LIST ORGS ---------- */
+
+app.get('/orgs', async (req, res) => {
+  try {
+    const { search } = req.query;
+
+    let query = supabase
+      .from('orgs')
+      .select('*')
+      .order('id', { ascending: false });
+
+    if (search) {
+      query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%,email.ilike.%${search}%`);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.json({ success: true, orgs: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/* ---------- GET SINGLE ORG ---------- */
+
+app.get('/orgs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from('orgs')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.json({ success: true, org: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/* ---------- CREATE ORG ---------- */
+
+app.post('/orgs', async (req, res) => {
+  try {
+    const { name, slug, email, plan, status } = req.body;
+
+    if (!name || !slug) {
+      return res.status(400).json({ success: false, error: 'Name and slug are required' });
+    }
+
+    const { data, error } = await supabase
+      .from('orgs')
+      .insert([{ name, slug, email, plan: plan || 'free', status: status || 'active' }])
+      .select();
+
+    if (error) {
+      // Handle unique slug violation
+      if (error.code === '23505') {
+        return res.status(409).json({ success: false, error: 'An org with this slug already exists' });
+      }
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.json({ success: true, org: data[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/* ---------- UPDATE ORG ---------- */
+
+app.patch('/orgs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, slug, email, plan, status } = req.body;
+
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (slug !== undefined) updateData.slug = slug;
+    if (email !== undefined) updateData.email = email;
+    if (plan !== undefined) updateData.plan = plan;
+    if (status !== undefined) updateData.status = status;
+    updateData.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('orgs')
+      .update(updateData)
+      .eq('id', id)
+      .select();
+
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ success: false, error: 'An org with this slug already exists' });
+      }
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.json({ success: true, org: data[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/* ---------- DELETE ORG ---------- */
+
+app.delete('/orgs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if it's the default org (prevent deletion)
+    const { data: org } = await supabase
+      .from('orgs')
+      .select('slug')
+      .eq('id', id)
+      .single();
+
+    if (org && org.slug === 'default') {
+      return res.status(400).json({ success: false, error: 'Cannot delete the default org' });
+    }
+
+    // Update orphaned sessions and test_runs to default org
+    const { data: defaultOrg } = await supabase
+      .from('orgs')
+      .select('id')
+      .eq('slug', 'default')
+      .single();
+
+    if (defaultOrg) {
+      await supabase
+        .from('chat_sessions')
+        .update({ org_id: defaultOrg.id })
+        .eq('org_id', id);
+
+      await supabase
+        .from('test_runs')
+        .update({ org_id: defaultOrg.id })
+        .eq('org_id', id);
+    }
+
+    const { error } = await supabase
+      .from('orgs')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.json({ success: true, message: 'Org deleted' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/* ---------- GET ORG STATS (session count, test run count) ---------- */
+
+app.get('/orgs/:id/stats', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [sessionCount, testRunCount, activeSessions] = await Promise.all([
+      supabase
+        .from('chat_sessions')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', id),
+      supabase
+        .from('test_runs')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', id),
+      supabase
+        .from('chat_sessions')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', id)
+        .eq('status', 'active')
+    ]);
+
+    res.json({
+      success: true,
+      stats: {
+        session_count: sessionCount.count || 0,
+        test_run_count: testRunCount.count || 0,
+        active_sessions: activeSessions.count || 0
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 /* ---------------- TEST RUNS FROM SUPABASE ---------------- */
 
 app.get('/test-runs', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { org_id } = req.query;
+
+    // Reconciliation: find any pending "triggered" runs and try to match them
+    // with orphaned completed runs (inserted by CI without org_id).
+    // This handles the case where CI runs old code that doesn't include org_id.
+    try {
+      const { data: pendingRuns } = await supabase
+        .from('test_runs')
+        .select('id, org_id')
+        .eq('status', 'triggered')
+        .order('id', { ascending: false });
+
+      if (pendingRuns && pendingRuns.length > 0) {
+        // Find orphaned completed runs (have passed/failed stats but no org_id)
+        const { data: orphanRuns } = await supabase
+          .from('test_runs')
+          .select('id')
+          .is('org_id', null)
+          .not('passed', 'is', null)
+          .order('id', { ascending: false });
+
+        if (orphanRuns && orphanRuns.length > 0) {
+          // Match pending runs to orphan runs by order (most recent pending -> most recent orphan)
+          for (let i = 0; i < Math.min(pendingRuns.length, orphanRuns.length); i++) {
+            const pending = pendingRuns[i];
+            const orphan = orphanRuns[i];
+
+            if (pending.org_id) {
+              await supabase
+                .from('test_runs')
+                .update({ org_id: pending.org_id })
+                .eq('id', orphan.id);
+
+              // Delete the pending triggered marker
+              await supabase
+                .from('test_runs')
+                .delete()
+                .eq('id', pending.id);
+
+              console.log(`🔄 Reconciled run ${orphan.id} -> org ${pending.org_id}`);
+            }
+          }
+        }
+      }
+    } catch (reconErr) {
+      console.error('Reconciliation error:', reconErr.message);
+    }
+
+    let query = supabase
       .from('test_runs')
       .select('*')
       .order('id', { ascending: false })
       .limit(10);
+
+    if (org_id) {
+      query = query.eq('org_id', org_id);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       return res.status(500).json({ success: false, error: error.message });
@@ -117,23 +395,84 @@ app.get('/debug-workflows', async (req, res) => {
 
 app.post('/sessions', async (req, res) => {
   try {
-    const { model, prompt } = req.body;
+    const { model, prompt, org_id } = req.body;
 
     // Auto-generate a title from the prompt
     const title = prompt
       ? prompt.slice(0, 80) + (prompt.length > 80 ? '...' : '')
       : 'New Session';
 
+    const insertData = { model, prompt, title, status: 'active' };
+    if (org_id) {
+      insertData.org_id = org_id;
+    }
+
     const { data, error } = await supabase
       .from('chat_sessions')
-      .insert([{ model, prompt, title, status: 'active' }])
+      .insert([insertData])
       .select();
 
     if (error) {
       return res.status(500).json({ success: false, error: error.message });
     }
 
-    res.json({ success: true, session: data[0] });
+    const session = data[0];
+
+    // If a prompt was provided, save it as the first user message and get AI response
+    let userMessage = null;
+    let aiMessage = null;
+
+    if (prompt && prompt.trim()) {
+      // 1. Save the prompt as the first user message
+      const { data: userMsgData, error: userMsgError } = await supabase
+        .from('session_messages')
+        .insert([{ session_id: session.id, content: prompt.trim(), role: 'user' }])
+        .select();
+
+      if (!userMsgError) {
+        userMessage = userMsgData[0];
+      }
+
+      // 2. Try to get AI response
+      try {
+        const messages = [
+          {
+            role: 'system',
+            content: 'You are AssertIQ, an AI assistant specialized in Playwright test automation, QA testing, and software quality. Help users write tests, debug issues, and improve their testing strategy. Be concise and practical.'
+          },
+          { role: 'user', content: prompt.trim() }
+        ];
+
+        const completion = await groq.chat.completions.create({
+          model: 'llama-3.1-8b-instant',
+          messages,
+          temperature: 0.7,
+          max_tokens: 2048
+        });
+
+        const aiContent = completion.choices[0]?.message?.content || '';
+
+        if (aiContent) {
+          const { data: aiMsgData, error: aiMsgError } = await supabase
+            .from('session_messages')
+            .insert([{ session_id: session.id, content: aiContent, role: 'assistant' }])
+            .select();
+
+          if (!aiMsgError) {
+            aiMessage = aiMsgData[0];
+          }
+        }
+      } catch (aiErr) {
+        console.error('AI generation error during session creation:', aiErr.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      session,
+      userMessage,
+      aiMessage
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -143,7 +482,7 @@ app.post('/sessions', async (req, res) => {
 
 app.get('/sessions', async (req, res) => {
   try {
-    const { search, model } = req.query;
+    const { search, model, org_id } = req.query;
 
     let query = supabase
       .from('chat_sessions')
@@ -155,6 +494,9 @@ app.get('/sessions', async (req, res) => {
     }
     if (model) {
       query = query.eq('model', model);
+    }
+    if (org_id) {
+      query = query.eq('org_id', org_id);
     }
 
     const { data, error } = await query;

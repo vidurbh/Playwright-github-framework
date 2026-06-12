@@ -333,6 +333,29 @@ function App() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [deletingMsgId, setDeletingMsgId] = useState(null);
 
+  // Org management state
+  const [orgs, setOrgs] = useState([]);
+  const [showOrgModal, setShowOrgModal] = useState(false);
+  const [editOrg, setEditOrg] = useState(null);
+  const [orgForm, setOrgForm] = useState({ name: '', slug: '', email: '', plan: 'free', status: 'active' });
+  const [orgSearchQuery, setOrgSearchQuery] = useState('');
+  const [deleteOrgConfirm, setDeleteOrgConfirm] = useState(null);
+  const [orgStats, setOrgStats] = useState({});
+
+  // Selected org for sessions filtering (persisted in localStorage)
+  const [selectedOrgId, setSelectedOrgIdState] = useState(() => {
+    return localStorage.getItem('selectedOrgId') || null;
+  });
+  const setSelectedOrgId = (id) => {
+    setSelectedOrgIdState(id);
+    if (id) {
+      localStorage.setItem('selectedOrgId', id);
+    } else {
+      localStorage.removeItem('selectedOrgId');
+    }
+  };
+  const [orgsList, setOrgsList] = useState([]);
+
   /* ---------- Auto-scroll ---------- */
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
@@ -349,8 +372,14 @@ function App() {
   /* ---------- Data fetching ---------- */
   const fetchSessions = async () => {
     try {
-      const searchParam = searchQuery ? `?search=${encodeURIComponent(searchQuery)}` : '';
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/sessions${searchParam}`);
+      let url = `${import.meta.env.VITE_API_URL}/sessions`;
+      const params = new URLSearchParams();
+      if (searchQuery) params.set('search', searchQuery);
+      if (selectedOrgId) params.set('org_id', selectedOrgId);
+      const qs = params.toString();
+      if (qs) url += '?' + qs;
+
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
         setSessions(data.sessions);
@@ -376,7 +405,10 @@ function App() {
 
   const fetchRuns = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/test-runs`);
+      let url = `${import.meta.env.VITE_API_URL}/test-runs`;
+      if (selectedOrgId) url += `?org_id=${selectedOrgId}`;
+
+      const response = await fetch(url);
       const data = await response.json();
       if (data.success) {
         setRuns(data.runs);
@@ -386,18 +418,67 @@ function App() {
     }
   };
 
+  const fetchOrgs = async () => {
+    try {
+      let url = `${import.meta.env.VITE_API_URL}/orgs`;
+      if (orgSearchQuery) url += `?search=${encodeURIComponent(orgSearchQuery)}`;
+
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.success) {
+        setOrgs(data.orgs);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchOrgsList = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/orgs`);
+      const data = await res.json();
+      if (data.success) {
+        setOrgsList(data.orgs);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchOrgStats = async (orgId) => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/orgs/${orgId}/stats`);
+      const data = await res.json();
+      if (data.success) {
+        setOrgStats((prev) => ({ ...prev, [orgId]: data.stats }));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     fetchRuns();
     fetchSessions();
+    fetchOrgsList();
   }, []);
 
-  // Re-fetch sessions when search changes (debounced)
+  // Re-fetch sessions when search or org changes
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchSessions();
+      fetchRuns();
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, selectedOrgId]);
+
+  // Re-fetch orgs when search changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (activeMenu === 'admin') fetchOrgs();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [orgSearchQuery, activeMenu]);
 
   /* ---------- Trigger tests ---------- */
   const triggerTests = async () => {
@@ -405,7 +486,9 @@ function App() {
       setLoading(true);
       setMessage('');
       const response = await fetch(`${import.meta.env.VITE_API_URL}/trigger-tests`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ org_id: selectedOrgId })
       });
       const data = await response.json();
       if (data.success) {
@@ -425,10 +508,13 @@ function App() {
   /* ---------- Session CRUD ---------- */
   const handleCreateSession = async () => {
     try {
+      const body = { model: selectedModel, prompt: sessionPrompt };
+      if (selectedOrgId) body.org_id = selectedOrgId;
+
       const res = await fetch(`${import.meta.env.VITE_API_URL}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: selectedModel, prompt: sessionPrompt })
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (data.success) {
@@ -436,6 +522,12 @@ function App() {
         setShowSessionModal(false);
         setSessionPrompt('');
         setSelectedSession(data.session);
+
+        // If the backend returned initial messages (from the prompt), populate them
+        const initialMessages = [];
+        if (data.userMessage) initialMessages.push(data.userMessage);
+        if (data.aiMessage) initialMessages.push(data.aiMessage);
+        setSessionMessages(initialMessages);
       }
     } catch (err) {
       console.error(err);
@@ -559,6 +651,97 @@ function App() {
     e.preventDefault();
     e.stopPropagation();
     setContextMenu({ x: e.clientX, y: e.clientY, session });
+  };
+
+  /* ---------- Org CRUD ---------- */
+  const handleOrgFormChange = (field, value) => {
+    setOrgForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const resetOrgForm = () => {
+    setOrgForm({ name: '', slug: '', email: '', plan: 'free', status: 'active' });
+    setEditOrg(null);
+  };
+
+  const handleOpenCreateOrg = () => {
+    resetOrgForm();
+    setShowOrgModal(true);
+  };
+
+  const handleOpenEditOrg = (org) => {
+    setEditOrg(org);
+    setOrgForm({
+      name: org.name || '',
+      slug: org.slug || '',
+      email: org.email || '',
+      plan: org.plan || 'free',
+      status: org.status || 'active'
+    });
+    setShowOrgModal(true);
+  };
+
+  const handleSaveOrg = async () => {
+    try {
+      const body = {
+        name: orgForm.name,
+        slug: orgForm.slug,
+        email: orgForm.email,
+        plan: orgForm.plan,
+        status: orgForm.status
+      };
+
+      let url = `${import.meta.env.VITE_API_URL}/orgs`;
+      let method = 'POST';
+
+      if (editOrg) {
+        url += `/${editOrg.id}`;
+        method = 'PATCH';
+      }
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        await fetchOrgs();
+        await fetchOrgsList();
+        setShowOrgModal(false);
+        resetOrgForm();
+      } else {
+        alert('Error: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error saving org');
+    }
+  };
+
+  const handleDeleteOrg = async (id) => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/orgs/${id}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchOrgs();
+        await fetchOrgsList();
+        if (selectedOrgId === id) {
+          setSelectedOrgId(null);
+        }
+      } else {
+        alert('Error: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    setDeleteOrgConfirm(null);
+  };
+
+  const handleOrgClick = (orgId) => {
+    fetchOrgStats(orgId);
   };
 
   /* ---------- Styles ---------- */
@@ -713,6 +896,65 @@ function App() {
         >
           <span>🤖</span> Chatbot
         </div>
+
+        <div
+          onClick={() => {
+            setActiveMenu('admin');
+            setSelectedSession(null);
+            setSessionMessages([]);
+            setAiThinking(false);
+            fetchOrgs();
+          }}
+          style={{
+            ...styles.menuItem,
+            background: activeMenu === 'admin' ? '#2a2a2a' : 'transparent'
+          }}
+        >
+          <span>🏢</span> Admin - Orgs
+        </div>
+
+        {/* Org Selector in Sidebar */}
+        <div
+          style={{
+            marginTop: 'auto',
+            paddingTop: '20px',
+            borderTop: '1px solid #222'
+          }}
+        >
+          <label
+            style={{
+              fontSize: '11px',
+              fontWeight: 600,
+              opacity: 0.5,
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              display: 'block',
+              marginBottom: '8px'
+            }}
+          >
+            Active Organization
+          </label>
+          <select
+            value={selectedOrgId || ''}
+            onChange={(e) => setSelectedOrgId(e.target.value || null)}
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              background: '#111',
+              color: 'white',
+              border: '1px solid #333',
+              outline: 'none',
+              fontSize: '13px',
+              cursor: 'pointer'
+            }}
+          >
+            <option value="">Default Org</option>
+            {orgsList.map((org) => (
+              <option key={org.id} value={org.id}>{org.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Content Area */}
@@ -844,6 +1086,29 @@ function App() {
               >
                 + New Session
               </button>
+            </div>
+
+            {/* Org Filter */}
+            <div style={{ marginBottom: '16px', maxWidth: '300px' }}>
+              <select
+                value={selectedOrgId || ''}
+                onChange={(e) => setSelectedOrgId(e.target.value || null)}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  borderRadius: '8px',
+                  background: '#111',
+                  color: 'white',
+                  border: '1px solid #333',
+                  outline: 'none',
+                  fontSize: '13px'
+                }}
+              >
+                <option value="">All Orgs</option>
+                {orgsList.map((org) => (
+                  <option key={org.id} value={org.id}>{org.name}</option>
+                ))}
+              </select>
             </div>
 
             {/* Search bar */}
@@ -996,23 +1261,31 @@ function App() {
                       </div>
                       <div
                         style={{
-                          fontSize: '12px',
-                          opacity: 0.5,
                           display: 'flex',
-                          gap: '12px'
+                          justifyContent: 'space-between',
+                          alignItems: 'center'
                         }}
                       >
-                        <span
+                        <div
                           style={{
-                            textTransform: 'capitalize',
-                            color: s.status === 'active' ? '#4ade80' : '#888'
+                            fontSize: '12px',
+                            opacity: 0.5,
+                            display: 'flex',
+                            gap: '12px'
                           }}
                         >
-                          ● {s.status}
-                        </span>
-                        {s.message_count && (
-                          <span>{s.message_count} messages</span>
-                        )}
+                          <span
+                            style={{
+                              textTransform: 'capitalize',
+                              color: s.status === 'active' ? '#4ade80' : '#888'
+                            }}
+                          >
+                            ● {s.status}
+                          </span>
+                          {s.message_count && (
+                            <span>{s.message_count} messages</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1247,6 +1520,202 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* ======= ADMIN - ORGS ======= */}
+        {activeMenu === 'admin' && (
+          <>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '24px',
+                flexWrap: 'wrap',
+                gap: '12px'
+              }}
+            >
+              <div>
+                <h1 style={{ fontSize: '28px', margin: 0 }}>🏢 Admin - Organizations</h1>
+                <p style={{ opacity: 0.6, margin: '4px 0 0 0', fontSize: '14px' }}>
+                  Manage organizations (companies) and their subscriptions
+                </p>
+              </div>
+              <button
+                onClick={handleOpenCreateOrg}
+                style={{
+                  ...styles.btn,
+                  background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+                  color: 'white'
+                }}
+              >
+                + New Organization
+              </button>
+            </div>
+
+            {/* Search */}
+            <div style={{ position: 'relative', marginBottom: '20px', maxWidth: '400px' }}>
+              <span style={{ position: 'absolute', left: '14px', top: '12px', opacity: 0.4 }}>🔍</span>
+              <input
+                type="text"
+                placeholder="Search orgs by name, slug, or email..."
+                value={orgSearchQuery}
+                onChange={(e) => setOrgSearchQuery(e.target.value)}
+                style={{
+                  ...styles.input,
+                  paddingLeft: '40px'
+                }}
+              />
+            </div>
+
+            {/* Org list */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1 }}>
+              {orgs.length === 0 && (
+                <div style={{ textAlign: 'center', opacity: 0.5, marginTop: '60px' }}>
+                  <p style={{ fontSize: '16px' }}>No organizations yet</p>
+                  <p style={{ fontSize: '13px' }}>
+                    Create an organization to manage subscriptions and sessions
+                  </p>
+                </div>
+              )}
+
+              {orgs.map((org) => (
+                <div
+                  key={org.id}
+                  style={{
+                    ...styles.card,
+                    cursor: 'default'
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      marginBottom: '12px'
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <h3 style={{ margin: 0, fontSize: '18px' }}>{org.name}</h3>
+                        <span
+                          style={{
+                            padding: '3px 10px',
+                            borderRadius: '12px',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            textTransform: 'uppercase',
+                            background:
+                              org.plan === 'paid' ? '#059669' : '#6b7280',
+                            color: 'white'
+                          }}
+                        >
+                          {org.plan}
+                        </span>
+                        <span
+                          style={{
+                            padding: '3px 10px',
+                            borderRadius: '12px',
+                            fontSize: '11px',
+                            fontWeight: 500,
+                            background:
+                              org.status === 'active' ? '#064e3b' :
+                              org.status === 'suspended' ? '#7f1d1d' : '#374151',
+                            color:
+                              org.status === 'active' ? '#4ade80' :
+                              org.status === 'suspended' ? '#f87171' : '#9ca3af'
+                          }}
+                        >
+                          {org.status}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '16px', marginTop: '6px', fontSize: '13px', opacity: 0.6 }}>
+                        <span>Slug: {org.slug}</span>
+                        {org.email && <span>📧 {org.email}</span>}
+                        <span>📅 {new Date(org.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        onClick={() => handleOpenEditOrg(org)}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: '6px',
+                          border: '1px solid #444',
+                          background: 'transparent',
+                          color: 'white',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#60a5fa')}
+                        onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#444')}
+                      >
+                        ✏️ Edit
+                      </button>
+                      <button
+                        onClick={() => setDeleteOrgConfirm(org.id)}
+                        disabled={org.slug === 'default'}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: '6px',
+                          border: '1px solid #444',
+                          background: 'transparent',
+                          color: org.slug === 'default' ? '#555' : '#f87171',
+                          cursor: org.slug === 'default' ? 'not-allowed' : 'pointer',
+                          fontSize: '12px',
+                          opacity: org.slug === 'default' ? 0.5 : 1,
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (org.slug !== 'default') e.currentTarget.style.borderColor = '#f87171';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = '#444';
+                        }}
+                        title={org.slug === 'default' ? 'Cannot delete default org' : 'Delete org'}
+                      >
+                        🗑️ Delete
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Org Stats */}
+                  <div
+                    onClick={() => handleOrgClick(org.id)}
+                    style={{
+                      display: 'flex',
+                      gap: '24px',
+                      padding: '12px',
+                      background: '#0f0f0f',
+                      borderRadius: '8px',
+                      marginTop: '8px'
+                    }}
+                  >
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#60a5fa' }}>
+                        {orgStats[org.id]?.session_count ?? '...'}
+                      </div>
+                      <div style={{ fontSize: '11px', opacity: 0.5 }}>Sessions</div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#4ade80' }}>
+                        {orgStats[org.id]?.active_sessions ?? '...'}
+                      </div>
+                      <div style={{ fontSize: '11px', opacity: 0.5 }}>Active</div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#fbbf24' }}>
+                        {orgStats[org.id]?.test_run_count ?? '...'}
+                      </div>
+                      <div style={{ fontSize: '11px', opacity: 0.5 }}>Test Runs</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* ======= CONTEXT MENU ======= */}
@@ -1271,7 +1740,7 @@ function App() {
         />
       )}
 
-      {/* ======= DELETE CONFIRMATION ======= */}
+      {/* ======= DELETE SESSION CONFIRMATION ======= */}
       {deleteConfirm && (
         <ConfirmDialog
           message="Are you sure you want to delete this session? All messages will be permanently removed."
@@ -1287,6 +1756,167 @@ function App() {
           onConfirm={() => handleDeleteMessage(deletingMsgId)}
           onCancel={() => setDeletingMsgId(null)}
         />
+      )}
+
+      {/* ======= DELETE ORG CONFIRMATION ======= */}
+      {deleteOrgConfirm && (
+        <ConfirmDialog
+          message="Are you sure you want to delete this organization? Its sessions and test runs will be reassigned to the default org."
+          onConfirm={() => handleDeleteOrg(deleteOrgConfirm)}
+          onCancel={() => setDeleteOrgConfirm(null)}
+        />
+      )}
+
+      {/* ======= CREATE/EDIT ORG MODAL ======= */}
+      {showOrgModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.7)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 1000
+          }}
+          onClick={() => {
+            setShowOrgModal(false);
+            resetOrgForm();
+          }}
+        >
+          <div
+            style={{
+              background: '#1f1f1f',
+              padding: '28px',
+              borderRadius: '16px',
+              width: '520px',
+              border: '1px solid #333',
+              maxWidth: '90vw'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: 0, fontSize: '22px' }}>
+              {editOrg ? 'Edit Organization' : 'Create Organization'}
+            </h2>
+            <p style={{ opacity: 0.5, fontSize: '13px', marginTop: '6px' }}>
+              {editOrg ? 'Update organization details' : 'Add a new organization (company)'}
+            </p>
+
+            <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 500, opacity: 0.8 }}>Name *</label>
+                <input
+                  type="text"
+                  value={orgForm.name}
+                  onChange={(e) => handleOrgFormChange('name', e.target.value)}
+                  placeholder="Acme Corp"
+                  style={{ ...styles.input, marginTop: '6px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 500, opacity: 0.8 }}>Slug *</label>
+                <input
+                  type="text"
+                  value={orgForm.slug}
+                  onChange={(e) => handleOrgFormChange('slug', e.target.value.replace(/\s+/g, '-').toLowerCase())}
+                  placeholder="acme-corp"
+                  disabled={!!editOrg}
+                  style={{
+                    ...styles.input,
+                    marginTop: '6px',
+                    opacity: editOrg ? 0.5 : 1
+                  }}
+                />
+                <div style={{ fontSize: '11px', opacity: 0.4, marginTop: '4px' }}>
+                  URL-friendly identifier. Cannot be changed after creation.
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 500, opacity: 0.8 }}>Email</label>
+                <input
+                  type="email"
+                  value={orgForm.email}
+                  onChange={(e) => handleOrgFormChange('email', e.target.value)}
+                  placeholder="admin@acme.com"
+                  style={{ ...styles.input, marginTop: '6px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '16px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '13px', fontWeight: 500, opacity: 0.8 }}>Plan</label>
+                  <select
+                    value={orgForm.plan}
+                    onChange={(e) => handleOrgFormChange('plan', e.target.value)}
+                    style={styles.select}
+                  >
+                    <option value="free">Free</option>
+                    <option value="paid">Paid</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '13px', fontWeight: 500, opacity: 0.8 }}>Status</label>
+                  <select
+                    value={orgForm.status}
+                    onChange={(e) => handleOrgFormChange('status', e.target.value)}
+                    style={styles.select}
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                    <option value="suspended">Suspended</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                marginTop: '28px'
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowOrgModal(false);
+                  resetOrgForm();
+                }}
+                style={{
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  border: '1px solid #444',
+                  background: 'transparent',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveOrg}
+                disabled={!orgForm.name.trim() || !orgForm.slug.trim()}
+                style={{
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: orgForm.name.trim() && orgForm.slug.trim()
+                    ? 'linear-gradient(135deg, #2563eb, #1d4ed8)'
+                    : '#333',
+                  color: 'white',
+                  cursor: orgForm.name.trim() && orgForm.slug.trim() ? 'pointer' : 'not-allowed',
+                  fontSize: '14px',
+                  opacity: orgForm.name.trim() && orgForm.slug.trim() ? 1 : 0.5
+                }}
+              >
+                {editOrg ? 'Update Organization' : 'Create Organization'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ======= CREATE SESSION MODAL ======= */}
@@ -1323,6 +1953,24 @@ function App() {
             </p>
 
             <div style={{ marginTop: '24px' }}>
+              <label
+                style={{ fontSize: '13px', fontWeight: 500, opacity: 0.8 }}
+              >
+                Org (optional)
+              </label>
+              <select
+                value={selectedOrgId || ''}
+                onChange={(e) => setSelectedOrgId(e.target.value || null)}
+                style={styles.select}
+              >
+                <option value="">Default Org</option>
+                {orgsList.map((org) => (
+                  <option key={org.id} value={org.id}>{org.name} ({org.plan})</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ marginTop: '20px' }}>
               <label
                 style={{ fontSize: '13px', fontWeight: 500, opacity: 0.8 }}
               >

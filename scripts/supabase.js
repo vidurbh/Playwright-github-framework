@@ -30,9 +30,48 @@ async function zipFolder(folderPath, outputPath) {
 }
 
 // ------------------------
-// Save test run
+// Save test run (update pending run if exists, otherwise insert)
 // ------------------------
 async function saveTestRun(data) {
+  // Try to find a pending "triggered" run (created by backend at trigger time)
+  // and update it with actual results. This preserves the org_id from the trigger.
+  const { data: pendingRuns, error: fetchError } = await supabase
+    .from('test_runs')
+    .select('id, org_id')
+    .eq('status', 'triggered')
+    .order('id', { ascending: false })
+    .limit(1);
+
+  if (!fetchError && pendingRuns && pendingRuns.length > 0) {
+    // Update the pending run with actual results, preserving org_id from trigger
+    const pendingRun = pendingRuns[0];
+    const updateData = { ...data };
+    delete updateData.org_id; // keep the org_id from the trigger
+    // If the pending run already has org_id, use it; otherwise use what was passed
+    if (pendingRun.org_id) {
+      updateData.org_id = pendingRun.org_id;
+    }
+
+    const { error: updateError } = await supabase
+      .from('test_runs')
+      .update(updateData)
+      .eq('id', pendingRun.id);
+
+    if (updateError) {
+      console.error('❌ DB Update Failed:', updateError.message);
+      // Fallback: insert as new
+      await insertFallback(data);
+    } else {
+      console.log('✅ Pending run updated (id:', pendingRun.id, ', org_id:', updateData.org_id || 'none', ')');
+    }
+  } else {
+    // No pending run found, insert as new
+    await insertFallback(data);
+  }
+}
+
+// Insert as new record (fallback)
+async function insertFallback(data) {
   const { error } = await supabase
     .from('test_runs')
     .insert([data]);
@@ -40,7 +79,7 @@ async function saveTestRun(data) {
   if (error) {
     console.error('❌ DB Insert Failed:', error.message);
   } else {
-    console.log('✅ Test run saved to Supabase');
+    console.log('✅ Test run inserted to Supabase (org_id:', data.org_id || 'none', ')');
   }
 }
 
