@@ -73,12 +73,22 @@ artifactUrl = await uploadFile(
     duration,
     branch,
     commit_sha,
-    report_url:'https://vidurbh.github.io/Playwright-github-framework/'
+    report_url:'https://vidurbh.github.io/Playwright-github-framework/',
+    status: 'completed'
   };
+
+  // Include org_id if provided (from workflow_dispatch env var)
+  const orgId = process.env.ORG_ID;
+  if (orgId) {
+    runData.org_id = parseInt(orgId, 10);
+  }
 
   console.log('💾 Saving to Supabase:', runData);
 
   // 5. Save to Supabase
+  // First try to find a pending "triggered" run (created by backend at trigger time)
+  // and update it with actual results, preserving the org_id from the trigger.
+  // If no pending run found, insert as new (fallback).
   await saveTestRun(runData);
 }
 
