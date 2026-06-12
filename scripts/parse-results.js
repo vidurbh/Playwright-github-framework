@@ -25,7 +25,7 @@ async function run() {
 
   const duration = Math.round(report.stats.duration);
 
-  const branch = process.env.GITHUB_REF || 'local';
+  const branch = (process.env.GITHUB_REF || 'local').replace('refs/heads/', '');
   const commit_sha = process.env.GITHUB_SHA || 'local';
 
   console.log('📊 Parsed Run Data:', {
@@ -65,15 +65,18 @@ artifactUrl = await uploadFile(
   }
 
   // 4. Final payload for DB
+  // Use the uploaded report URL if available, otherwise fall back to GitHub Pages
+  const finalReportUrl = reportUrl || 'https://vidurbh.github.io/Playwright-github-framework/';
   const runData = {
     passed,
     failed,
     flaky,
     total,
+    duration_ms: duration,
     duration,
     branch,
     commit_sha,
-    report_url:'https://vidurbh.github.io/Playwright-github-framework/',
+    report_url: finalReportUrl,
     status: 'completed'
   };
 

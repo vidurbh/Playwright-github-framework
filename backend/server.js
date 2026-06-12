@@ -6,6 +6,7 @@ const OpenAI = require('openai');
 
 const app = express();
 const supabase = require('./supabase');
+const { authenticate } = require('./auth');
 
 const WORKFLOW_ID = 259296608;
 
@@ -26,11 +27,23 @@ app.use(cors({
 
 app.use(express.json());
 
-/* ---------------- HEALTH CHECK ---------------- */
+// Auth middleware - runs on all routes except public ones
+app.use(authenticate);
+
+/* ---------------- PUBLIC ROUTES ---------------- */
 
 app.get('/', (req, res) => {
-  res.json({ status: 'Backend running' });
+  res.json({ status: 'AssertIQ Backend', version: '1.0.0', timestamp: new Date().toISOString() });
 });
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+/* ---------------- AUTH ROUTES ---------------- */
+
+const authRoutes = require('./routes/auth');
+app.use('/auth', authRoutes);
 
 /* ---------------- TRIGGER GITHUB WORKFLOW ---------------- */
 
@@ -43,15 +56,26 @@ app.post('/trigger-tests', async (req, res) => {
     console.log("TOKEN EXISTS:", !!process.env.GITHUB_TOKEN);
     console.log("ORG_ID:", org_id);
 
+    // Resolve org_id: if none provided, look up the default org
+    let resolvedOrgId = org_id;
+    if (!resolvedOrgId) {
+      const { data: defaultOrg } = await supabase
+        .from('orgs')
+        .select('id')
+        .eq('slug', 'default')
+        .single();
+      if (defaultOrg) {
+        resolvedOrgId = defaultOrg.id;
+      }
+    }
+
     // Save a pending run with org_id BEFORE triggering
     // This way parse-results can look it up later
     const pendingRunData = {
       status: 'triggered',
-      triggered_at: new Date().toISOString()
+      triggered_at: new Date().toISOString(),
+      org_id: resolvedOrgId
     };
-    if (org_id) {
-      pendingRunData.org_id = org_id;
-    }
     const { data: pendingRun, error: pendingError } = await supabase
       .from('test_runs')
       .insert([pendingRunData])
@@ -60,7 +84,7 @@ app.post('/trigger-tests', async (req, res) => {
     if (pendingError) {
       console.error('Pending run save error:', pendingError.message);
     } else {
-      console.log('✅ Pending run saved with id:', pendingRun?.[0]?.id, 'org_id:', org_id);
+      console.log('✅ Pending run saved with id:', pendingRun?.[0]?.id, 'org_id:', resolvedOrgId);
     }
 
     const response = await fetch(
@@ -99,14 +123,31 @@ app.post('/trigger-tests', async (req, res) => {
 app.get('/orgs', async (req, res) => {
   try {
     const { search } = req.query;
+    const isAdmin = req.profile?.role === 'admin';
+    const userId = req.user.id;
 
-    let query = supabase
-      .from('orgs')
-      .select('*')
-      .order('id', { ascending: false });
+    let query;
 
-    if (search) {
-      query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%,email.ilike.%${search}%`);
+    if (isAdmin) {
+      // Admin sees all orgs
+      query = supabase
+        .from('orgs')
+        .select('*')
+        .order('id', { ascending: false });
+
+      if (search) {
+        query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%,email.ilike.%${search}%`);
+      }
+    } else {
+      // Regular users only see orgs they belong to
+      query = supabase
+        .from('user_orgs')
+        .select('org:orgs(*)')
+        .eq('user_id', userId);
+
+      if (search) {
+        query = query.ilike('org.name', `%${search}%`);
+      }
     }
 
     const { data, error } = await query;
@@ -115,7 +156,10 @@ app.get('/orgs', async (req, res) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
-    res.json({ success: true, orgs: data });
+    // For non-admin users, extract orgs from the join
+    const orgs = isAdmin ? data : data.map(uo => uo.org).filter(Boolean);
+
+    res.json({ success: true, orgs });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -143,9 +187,13 @@ app.get('/orgs/:id', async (req, res) => {
   }
 });
 
-/* ---------- CREATE ORG ---------- */
+/* ---------- CREATE ORG (admin only) ---------- */
 
 app.post('/orgs', async (req, res) => {
+  if (req.profile?.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+
   try {
     const { name, slug, email, plan, status } = req.body;
 
@@ -172,9 +220,13 @@ app.post('/orgs', async (req, res) => {
   }
 });
 
-/* ---------- UPDATE ORG ---------- */
+/* ---------- UPDATE ORG (admin only) ---------- */
 
 app.patch('/orgs/:id', async (req, res) => {
+  if (req.profile?.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+
   try {
     const { id } = req.params;
     const { name, slug, email, plan, status } = req.body;
@@ -206,9 +258,13 @@ app.patch('/orgs/:id', async (req, res) => {
   }
 });
 
-/* ---------- DELETE ORG ---------- */
+/* ---------- DELETE ORG (admin only) ---------- */
 
 app.delete('/orgs/:id', async (req, res) => {
+  if (req.profile?.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+
   try {
     const { id } = req.params;
 
