@@ -1,4 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { useAuth } from './AuthContext';
+import AuthPage from './Auth';
+import { apiRequest } from './api';
 
 /* ---------- Simple Markdown Renderer ---------- */
 function MarkdownRenderer({ content }) {
@@ -308,6 +311,32 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
    ================================================================ */
 
 function App() {
+  const { user, logout, isAuthenticated, loading: authLoading } = useAuth();
+
+  // Show auth page if not authenticated
+  if (authLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        background: '#0f0f0f',
+        color: 'white',
+        fontFamily: "'Segoe UI', Arial, sans-serif"
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>🧪</div>
+          <div style={{ color: '#888', fontSize: '16px' }}>Loading...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <AuthPage />;
+  }
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [runs, setRuns] = useState([]);
@@ -372,15 +401,13 @@ function App() {
   /* ---------- Data fetching ---------- */
   const fetchSessions = async () => {
     try {
-      let url = `${import.meta.env.VITE_API_URL}/sessions`;
+      let url = `/sessions`;
       const params = new URLSearchParams();
       if (searchQuery) params.set('search', searchQuery);
-      if (selectedOrgId) params.set('org_id', selectedOrgId);
       const qs = params.toString();
       if (qs) url += '?' + qs;
 
-      const res = await fetch(url);
-      const data = await res.json();
+      const data = await apiRequest(url);
       if (data.success) {
         setSessions(data.sessions);
       }
@@ -391,10 +418,7 @@ function App() {
 
   const fetchSessionMessages = async (sessionId) => {
     try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/sessions/${sessionId}/messages`
-      );
-      const data = await res.json();
+      const data = await apiRequest(`/sessions/${sessionId}/messages`);
       if (data.success) {
         setSessionMessages(data.messages);
       }
@@ -405,11 +429,10 @@ function App() {
 
   const fetchRuns = async () => {
     try {
-      let url = `${import.meta.env.VITE_API_URL}/test-runs`;
+      let url = `/test-runs`;
       if (selectedOrgId) url += `?org_id=${selectedOrgId}`;
 
-      const response = await fetch(url);
-      const data = await response.json();
+      const data = await apiRequest(url);
       if (data.success) {
         setRuns(data.runs);
       }
@@ -420,11 +443,10 @@ function App() {
 
   const fetchOrgs = async () => {
     try {
-      let url = `${import.meta.env.VITE_API_URL}/orgs`;
+      let url = `/orgs`;
       if (orgSearchQuery) url += `?search=${encodeURIComponent(orgSearchQuery)}`;
 
-      const res = await fetch(url);
-      const data = await res.json();
+      const data = await apiRequest(url);
       if (data.success) {
         setOrgs(data.orgs);
       }
@@ -435,8 +457,7 @@ function App() {
 
   const fetchOrgsList = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/orgs`);
-      const data = await res.json();
+      const data = await apiRequest('/orgs');
       if (data.success) {
         setOrgsList(data.orgs);
       }
@@ -447,8 +468,7 @@ function App() {
 
   const fetchOrgStats = async (orgId) => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/orgs/${orgId}/stats`);
-      const data = await res.json();
+      const data = await apiRequest(`/orgs/${orgId}/stats`);
       if (data.success) {
         setOrgStats((prev) => ({ ...prev, [orgId]: data.stats }));
       }
@@ -485,12 +505,10 @@ function App() {
     try {
       setLoading(true);
       setMessage('');
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/trigger-tests`, {
+      const data = await apiRequest('/trigger-tests', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ org_id: selectedOrgId })
       });
-      const data = await response.json();
       if (data.success) {
         setMessage('✅ Tests triggered successfully');
         setTimeout(() => fetchRuns(), 5000);
@@ -509,14 +527,11 @@ function App() {
   const handleCreateSession = async () => {
     try {
       const body = { model: selectedModel, prompt: sessionPrompt };
-      if (selectedOrgId) body.org_id = selectedOrgId;
 
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/sessions`, {
+      const data = await apiRequest('/sessions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      const data = await res.json();
       if (data.success) {
         await fetchSessions();
         setShowSessionModal(false);
@@ -536,12 +551,10 @@ function App() {
 
   const handleRenameSession = async (id, newTitle) => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/sessions/${id}`, {
+      const data = await apiRequest(`/sessions/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle })
       });
-      const data = await res.json();
       if (data.success) {
         setSessions((prev) =>
           prev.map((s) => (s.id === id ? { ...s, title: newTitle } : s))
@@ -558,10 +571,9 @@ function App() {
 
   const handleDeleteSession = async (id) => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/sessions/${id}`, {
+      const data = await apiRequest(`/sessions/${id}`, {
         method: 'DELETE'
       });
-      const data = await res.json();
       if (data.success) {
         setSessions((prev) => prev.filter((s) => s.id !== id));
         if (selectedSession?.id === id) {
@@ -582,16 +594,10 @@ function App() {
     try {
       setSendingMessage(true);
 
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/sessions/${selectedSession.id}/messages`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: newMessage.trim(), role: 'user' })
-        }
-      );
-
-      const data = await res.json();
+      const data = await apiRequest(`/sessions/${selectedSession.id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content: newMessage.trim(), role: 'user' })
+      });
 
       if (data.success) {
         setSessionMessages((prev) => [...prev, data.message]);
@@ -622,10 +628,9 @@ function App() {
 
   const handleDeleteMessage = async (msgId) => {
     try {
-      await fetch(
-        `${import.meta.env.VITE_API_URL}/sessions/${selectedSession.id}/messages/${msgId}`,
-        { method: 'DELETE' }
-      );
+      await apiRequest(`/sessions/${selectedSession.id}/messages/${msgId}`, {
+        method: 'DELETE'
+      });
       setSessionMessages((prev) => prev.filter((m) => m.id !== msgId));
     } catch (err) {
       console.error(err);
@@ -698,13 +703,10 @@ function App() {
         method = 'PATCH';
       }
 
-      const res = await fetch(url, {
+      const data = await apiRequest(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-
-      const data = await res.json();
       if (data.success) {
         await fetchOrgs();
         await fetchOrgsList();
@@ -721,10 +723,9 @@ function App() {
 
   const handleDeleteOrg = async (id) => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/orgs/${id}`, {
+      const data = await apiRequest(`/orgs/${id}`, {
         method: 'DELETE'
       });
-      const data = await res.json();
       if (data.success) {
         await fetchOrgs();
         await fetchOrgsList();
@@ -897,30 +898,93 @@ function App() {
           <span>🤖</span> Chatbot
         </div>
 
-        <div
-          onClick={() => {
-            setActiveMenu('admin');
-            setSelectedSession(null);
-            setSessionMessages([]);
-            setAiThinking(false);
-            fetchOrgs();
-          }}
-          style={{
-            ...styles.menuItem,
-            background: activeMenu === 'admin' ? '#2a2a2a' : 'transparent'
-          }}
-        >
-          <span>🏢</span> Admin - Orgs
-        </div>
+        {user?.role === 'admin' && (
+          <div
+            onClick={() => {
+              setActiveMenu('admin');
+              setSelectedSession(null);
+              setSessionMessages([]);
+              setAiThinking(false);
+              fetchOrgs();
+            }}
+            style={{
+              ...styles.menuItem,
+              background: activeMenu === 'admin' ? '#2a2a2a' : 'transparent'
+            }}
+          >
+            <span>🏢</span> Admin - Orgs
+          </div>
+        )}
 
-        {/* Org Selector in Sidebar */}
+        {/* User Profile */}
         <div
           style={{
             marginTop: 'auto',
-            paddingTop: '20px',
+            padding: '16px 0',
             borderTop: '1px solid #222'
           }}
         >
+          {/* User Info */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '8px 4px',
+              marginBottom: '16px'
+            }}
+          >
+            <div
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '14px',
+                fontWeight: 'bold',
+                flexShrink: 0
+              }}
+            >
+              {user?.full_name?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || '?'}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: '13px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {user?.full_name || user?.email?.split('@')[0] || 'User'}
+              </div>
+              <div style={{ fontSize: '11px', opacity: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {user?.email || ''}
+              </div>
+            </div>
+            <button
+              onClick={logout}
+              title="Sign out"
+              style={{
+                background: 'none',
+                border: '1px solid #444',
+                color: '#888',
+                padding: '6px 10px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                transition: 'all 0.2s',
+                flexShrink: 0
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#f87171';
+                e.currentTarget.style.color = '#f87171';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#444';
+                e.currentTarget.style.color = '#888';
+              }}
+            >
+              Sign Out
+            </button>
+          </div>
+
           <label
             style={{
               fontSize: '11px',
@@ -1008,45 +1072,85 @@ function App() {
               >
                 <thead>
                   <tr style={{ borderBottom: '1px solid #333' }}>
+                    <th style={{ textAlign: 'left', opacity: 0.6 }}>ID</th>
+                    <th style={{ textAlign: 'left', opacity: 0.6 }}>Date</th>
                     <th style={{ textAlign: 'left', opacity: 0.6 }}>Passed</th>
                     <th style={{ textAlign: 'left', opacity: 0.6 }}>Failed</th>
                     <th style={{ textAlign: 'left', opacity: 0.6 }}>Total</th>
                     <th style={{ textAlign: 'left', opacity: 0.6 }}>Duration</th>
+                    <th style={{ textAlign: 'left', opacity: 0.6 }}>Branch</th>
                     <th style={{ textAlign: 'left', opacity: 0.6 }}>Report</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {runs.map((run) => (
+                  {/* Sort runs by created_at descending to show latest first */}
+                  {[...runs].sort((a, b) => {
+                    const dateA = new Date(a.created_at || a.triggered_at || 0);
+                    const dateB = new Date(b.created_at || b.triggered_at || 0);
+                    return dateB - dateA;
+                  }).map((run) => (
                     <tr
                       key={run.id}
                       style={{ borderBottom: '1px solid #222' }}
                     >
-                      <td style={{ color: '#4ade80' }}>{run.passed}</td>
-                      <td style={{ color: '#f87171' }}>{run.failed}</td>
-                      <td>{run.total}</td>
-                      <td style={{ opacity: 0.6 }}>{run.duration} ms</td>
+                      <td style={{ opacity: 0.5, fontSize: '12px' }}>#{run.id}</td>
+                      <td style={{ opacity: 0.6, fontSize: '12px', whiteSpace: 'nowrap' }}>
+                        {run.created_at
+                          ? new Date(run.created_at).toLocaleString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              timeZoneName: 'short'
+                            })
+                          : run.triggered_at
+                            ? new Date(run.triggered_at).toLocaleString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                timeZoneName: 'short'
+                              })
+                            : '—'}
+                      </td>
+                      <td style={{ color: '#4ade80' }}>{run.passed ?? '—'}</td>
+                      <td style={{ color: '#f87171' }}>{run.failed ?? '—'}</td>
+                      <td>{run.total ?? '—'}</td>
+                      <td style={{ opacity: 0.6, whiteSpace: 'nowrap' }}>
+                        {run.duration_ms || run.duration
+                          ? `${Math.round((run.duration_ms || run.duration) / 1000)}s`
+                          : '—'}
+                      </td>
+                      <td style={{ opacity: 0.5, fontSize: '12px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {run.branch || '—'}
+                      </td>
                       <td>
-                        <a
-                          href={run.report_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{
-                            color: '#60a5fa',
-                            textDecoration: 'none',
-                            padding: '4px 12px',
-                            borderRadius: '6px',
-                            background: '#1a1a2e',
-                            fontSize: '13px'
-                          }}
-                        >
-                          Open Report ↗
-                        </a>
+                        {run.report_url ? (
+                          <a
+                            href={run.report_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              color: '#60a5fa',
+                              textDecoration: 'none',
+                              padding: '4px 12px',
+                              borderRadius: '6px',
+                              background: '#1a1a2e',
+                              fontSize: '13px',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            Open Report ↗
+                          </a>
+                        ) : (
+                          <span style={{ opacity: 0.3, fontSize: '12px' }}>No report</span>
+                        )}
                       </td>
                     </tr>
                   ))}
                   {runs.length === 0 && (
                     <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', opacity: 0.5, padding: '24px' }}>
+                      <td colSpan={8} style={{ textAlign: 'center', opacity: 0.5, padding: '24px' }}>
                         No test runs yet. Trigger a run to see results.
                       </td>
                     </tr>
@@ -1086,29 +1190,6 @@ function App() {
               >
                 + New Session
               </button>
-            </div>
-
-            {/* Org Filter */}
-            <div style={{ marginBottom: '16px', maxWidth: '300px' }}>
-              <select
-                value={selectedOrgId || ''}
-                onChange={(e) => setSelectedOrgId(e.target.value || null)}
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  borderRadius: '8px',
-                  background: '#111',
-                  color: 'white',
-                  border: '1px solid #333',
-                  outline: 'none',
-                  fontSize: '13px'
-                }}
-              >
-                <option value="">All Orgs</option>
-                {orgsList.map((org) => (
-                  <option key={org.id} value={org.id}>{org.name}</option>
-                ))}
-              </select>
             </div>
 
             {/* Search bar */}
@@ -1951,24 +2032,6 @@ function App() {
             <p style={{ opacity: 0.5, fontSize: '13px', marginTop: '6px' }}>
               Start a new AI-powered chat session
             </p>
-
-            <div style={{ marginTop: '24px' }}>
-              <label
-                style={{ fontSize: '13px', fontWeight: 500, opacity: 0.8 }}
-              >
-                Org (optional)
-              </label>
-              <select
-                value={selectedOrgId || ''}
-                onChange={(e) => setSelectedOrgId(e.target.value || null)}
-                style={styles.select}
-              >
-                <option value="">Default Org</option>
-                {orgsList.map((org) => (
-                  <option key={org.id} value={org.id}>{org.name} ({org.plan})</option>
-                ))}
-              </select>
-            </div>
 
             <div style={{ marginTop: '20px' }}>
               <label
