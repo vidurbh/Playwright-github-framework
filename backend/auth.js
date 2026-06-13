@@ -20,6 +20,7 @@ const supabaseAdmin = createClient(
 const PUBLIC_ROUTES = [
   { method: 'POST', path: '/auth/register' },
   { method: 'POST', path: '/auth/login' },
+  { method: 'POST', path: '/auth/refresh' },
   { method: 'GET', path: '/' },
   { method: 'GET', path: '/health' }
 ];

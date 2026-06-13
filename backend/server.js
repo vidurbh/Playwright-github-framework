@@ -8,6 +8,8 @@ const OpenAI = require('openai');
 const app = express();
 const supabase = require('./supabase');
 const { authenticate } = require('./auth');
+const github = require('./github');
+const { generateScaffold } = require('./scaffold-repo');
 
 const WORKFLOW_ID = 259296608;
 
@@ -674,6 +676,127 @@ app.get('/sessions/:id/messages', async (req, res) => {
 
 /* ---------- SEND MESSAGE + GET AI RESPONSE ---------- */
 
+/**
+ * Tool definitions for Groq AI function calling
+ */
+const AI_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'create_org_repo',
+      description: 'Create a new private GitHub repository for an organization with a Playwright test suite scaffolded. The repo will contain a full Playwright automation framework with CI/CD, page objects, fixtures, API helpers, and sample tests.',
+      parameters: {
+        type: 'object',
+        properties: {
+          repo_name: {
+            type: 'string',
+            description: 'Name of the GitHub repository to create (e.g. "acme-corp-test-suite"). Auto-generate from the org slug if not provided.'
+          },
+          org_name: {
+            type: 'string',
+            description: 'The organization name (e.g. "Acme Corp") used for README and package.json'
+          },
+          org_slug: {
+            type: 'string',
+            description: 'The organization slug used for naming (e.g. "acme-corp")'
+          },
+          description: {
+            type: 'string',
+            description: 'Description for the GitHub repository'
+          }
+        },
+        required: ['org_name', 'org_slug']
+      }
+    }
+  }
+];
+
+/**
+ * Execute the create_org_repo tool: create repo, scaffold files, create PR
+ */
+async function executeCreateOrgRepo(args) {
+  const { repo_name, org_name, org_slug, description } = args;
+  const actualRepoName = repo_name || `${org_slug}-test-suite`;
+  const repoDescription = description || `Playwright Test Suite for ${org_name}`;
+
+  console.log(`🛠️ Creating repo "${actualRepoName}" for org "${org_name}"...`);
+
+  // 1. Create the private repo
+  const repo = await github.createRepo(actualRepoName, repoDescription);
+  const { owner, repo: repoName, htmlUrl } = repo;
+
+  // 2. Generate scaffold files
+  const { files, branch } = generateScaffold(org_name, org_slug);
+  console.log(`📦 Generated ${files.length} scaffold files for branch "${branch}"`);
+
+  // 3. Create a branch from main (repo auto-inits with main branch after first commit)
+  // We need to create an initial commit first, then branch
+  // Strategy: create the initial commit on main, then branch off
+  const defaultBranch = await github.getDefaultBranch(owner, repoName);
+
+  // 4. Create a feature branch
+  const featureBranch = `${branch}`;
+  await github.createBranch(owner, repoName, featureBranch, defaultBranch);
+
+  // 5. Push all scaffold files to the feature branch
+  for (const file of files) {
+    await github.createOrUpdateFile(
+      owner, repoName, file.path, file.content, file.message, featureBranch
+    );
+  }
+
+  // 6. Create a Pull Request
+  const prTitle = `feat: add Playwright test suite for ${org_name}`;
+  const prBody = `## 🚀 Automated Test Suite Setup
+
+This PR sets up a complete Playwright automation framework for **${org_name}**.
+
+### What's included:
+
+- ✅ Playwright configuration with Chromium, Firefox, and WebKit
+- ✅ Page Object Model pattern
+- ✅ Test fixtures for dependency injection
+- ✅ API helper layer
+- ✅ Example tests
+- ✅ TypeScript configuration
+- ✅ GitHub Actions CI/CD pipeline
+- ✅ Project documentation
+
+### Getting Started
+
+\`\`\`bash
+npm install
+npx playwright install
+npx playwright test
+\`\`\`
+
+### CI/CD
+
+Tests run automatically on every push to main/master via GitHub Actions.
+`;
+  const pr = await github.createPullRequest(
+    owner, repoName, prTitle, prBody, featureBranch, defaultBranch
+  );
+
+  // Return a summary for the AI to present to the user
+  const summaryLines = [
+    `✅ **Repository created**: [${owner}/${repoName}](${htmlUrl})`,
+    `📂 **Branch**: \`${featureBranch}\``,
+    `🔀 **Pull Request**: [#${pr.number}](${pr.url})`,
+    ``,
+    `The PR contains ${files.length} files setting up a complete Playwright automation framework.`,
+    `Once merged, tests will automatically run via GitHub Actions on every push.`
+  ];
+
+  return {
+    success: true,
+    summary: summaryLines.join('\n'),
+    repo: { owner, name: repoName, url: htmlUrl },
+    pullRequest: { number: pr.number, url: pr.url },
+    filesCreated: files.length
+  };
+}
+
 app.post('/sessions/:id/messages', async (req, res) => {
   const { id } = req.params;
   const { content, role } = req.body;
@@ -691,7 +814,7 @@ app.post('/sessions/:id/messages', async (req, res) => {
 
     const userMessage = userMsgData[0];
 
-    // 2. Try to get AI response
+    // 2. Try to get AI response (with tool support)
     let aiMessage = null;
 
     try {
@@ -702,11 +825,33 @@ app.post('/sessions/:id/messages', async (req, res) => {
         .eq('session_id', id)
         .order('id', { ascending: true });
 
+      // Fetch session to get org context
+      const { data: sessionData } = await supabase
+        .from('chat_sessions')
+        .select('id, org_id')
+        .eq('id', id)
+        .single();
+
+      let orgContext = '';
+      if (sessionData?.org_id) {
+        const { data: orgData } = await supabase
+          .from('orgs')
+          .select('name, slug')
+          .eq('id', sessionData.org_id)
+          .single();
+        if (orgData) {
+          orgContext = `\nThe current organization context is: Name="${orgData.name}", Slug="${orgData.slug}". When the user asks to create a repo, use this org context.`;
+        }
+      }
+
       // Build conversation history for AI
       const messages = [
         {
           role: 'system',
-          content: 'You are AssertIQ, an AI assistant specialized in Playwright test automation, QA testing, and software quality. Help users write tests, debug issues, and improve their testing strategy. Be concise and practical.'
+          content: 'You are AssertIQ, an AI assistant specialized in Playwright test automation, QA testing, and software quality. Help users write tests, debug issues, and improve their testing strategy. Be concise and practical.' +
+            ' You have the ability to create GitHub repositories with a full Playwright test suite scaffold.' +
+            ' When the user asks to create a repo, use the `create_org_repo` tool.' +
+            orgContext
         },
         ...(history || []).map(m => ({
           role: m.role === 'assistant' ? 'assistant' : 'user',
@@ -717,21 +862,100 @@ app.post('/sessions/:id/messages', async (req, res) => {
       const completion = await groq.chat.completions.create({
         model: 'llama-3.1-8b-instant',
         messages,
+        tools: AI_TOOLS,
+        tool_choice: 'auto',
         temperature: 0.7,
-        max_tokens: 2048
+        max_tokens: 4096
       });
 
-      const aiContent = completion.choices[0]?.message?.content || '';
+      const responseMessage = completion.choices[0]?.message;
 
-      if (aiContent) {
-        // Store AI response
-        const { data: aiMsgData, error: aiMsgError } = await supabase
-          .from('session_messages')
-          .insert([{ session_id: id, content: aiContent, role: 'assistant' }])
-          .select();
+      // Check if AI wants to call a tool
+      if (responseMessage?.tool_calls && responseMessage.tool_calls.length > 0) {
+        // Process each tool call
+        const toolResults = [];
 
-        if (!aiMsgError) {
-          aiMessage = aiMsgData[0];
+        for (const toolCall of responseMessage.tool_calls) {
+          if (toolCall.function.name === 'create_org_repo') {
+            try {
+              const args = JSON.parse(toolCall.function.arguments);
+              const result = await executeCreateOrgRepo(args);
+
+              // Save the tool result as a message so the AI can see it in history
+              if (result.success) {
+                await supabase
+                  .from('session_messages')
+                  .insert([{
+                    session_id: id,
+                    content: `[System] create_org_repo executed successfully:\n${result.summary}`,
+                    role: 'system'
+                  }]);
+              }
+
+              toolResults.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(result)
+              });
+            } catch (err) {
+              console.error('Tool execution error:', err);
+              toolResults.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  success: false,
+                  error: err.message
+                })
+              });
+            }
+          }
+        }
+
+        // Now send the tool results back to Groq for a natural language summary
+        const followUpMessages = [
+          ...messages,
+          responseMessage,
+          ...toolResults
+        ];
+
+        const followUpCompletion = await groq.chat.completions.create({
+          model: 'llama-3.1-8b-instant',
+          messages: followUpMessages,
+          temperature: 0.7,
+          max_tokens: 2048
+        });
+
+        const finalContent = followUpCompletion.choices[0]?.message?.content || '';
+
+        if (finalContent) {
+          const { data: aiMsgData, error: aiMsgError } = await supabase
+            .from('session_messages')
+            .insert([{ session_id: id, content: finalContent, role: 'assistant' }])
+            .select();
+
+          if (!aiMsgError) {
+            aiMessage = aiMsgData[0];
+          }
+        }
+
+        // Update session status
+        await supabase
+          .from('chat_sessions')
+          .update({ status: 'active' })
+          .eq('id', id);
+      } else {
+        // No tool calls — normal text response
+        const aiContent = responseMessage?.content || '';
+
+        if (aiContent) {
+          const { data: aiMsgData, error: aiMsgError } = await supabase
+            .from('session_messages')
+            .insert([{ session_id: id, content: aiContent, role: 'assistant' }])
+            .select();
+
+          if (!aiMsgError) {
+            aiMessage = aiMsgData[0];
+          }
         }
 
         // Update session status

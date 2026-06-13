@@ -404,6 +404,7 @@ function App() {
       let url = `/sessions`;
       const params = new URLSearchParams();
       if (searchQuery) params.set('search', searchQuery);
+      if (selectedOrgId) params.set('org_id', selectedOrgId);
       const qs = params.toString();
       if (qs) url += '?' + qs;
 
@@ -527,6 +528,9 @@ function App() {
   const handleCreateSession = async () => {
     try {
       const body = { model: selectedModel, prompt: sessionPrompt };
+      if (selectedOrgId) {
+        body.org_id = selectedOrgId;
+      }
 
       const data = await apiRequest('/sessions', {
         method: 'POST',
