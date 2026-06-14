@@ -1,9 +1,9 @@
 /**
- * Auth routes: register, login, logout, me, profile
+ * Auth routes: register, login, google auth, logout, me, profile
  */
 const express = require('express');
 const router = express.Router();
-const { supabaseAdmin } = require('../auth');
+const { supabaseAdmin, resolveRole } = require('../auth');
 
 // Health check (public)
 router.get('/health', (req, res) => {
@@ -11,123 +11,96 @@ router.get('/health', (req, res) => {
 });
 
 /**
- * POST /auth/register
- * Create a new user account via Supabase Auth
- * Body: { email, password, full_name? }
+ * POST /auth/google
+ * Authenticate with Google ID token (from Google One Tap / Google Identity Services)
+ * Body: { id_token }  or  { access_token }
  */
-router.post('/register', async (req, res) => {
+router.post('/google', async (req, res) => {
   try {
-    const { email, password, full_name } = req.body;
+    const { id_token, access_token } = req.body;
 
-    if (!email || !password) {
+    if (!id_token && !access_token) {
       return res.status(400).json({
         success: false,
-        error: 'Email and password are required'
+        error: 'Google id_token or access_token is required'
       });
     }
 
-    if (password.length < 6) {
+    let authResult;
+
+    if (id_token) {
+      // Authenticate with Google ID token via Supabase
+      authResult = await supabaseAdmin.auth.signInWithIdToken({
+        provider: 'google',
+        token: id_token
+      });
+    } else {
+      // Alternative: use the Supabase client-side session
       return res.status(400).json({
         success: false,
-        error: 'Password must be at least 6 characters'
+        error: 'id_token is required. Use Google Identity Services to get an id_token.'
       });
     }
 
-    // Create user in Supabase Auth
-    const { data, error } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { full_name: full_name || email.split('@')[0] }
-    });
+    const { data, error } = authResult;
 
     if (error) {
-      console.error('Registration error:', error.message);
-
-      if (error.message.includes('already registered')) {
-        return res.status(409).json({
-          success: false,
-          error: 'An account with this email already exists'
-        });
-      }
-
-      return res.status(500).json({
+      console.error('Google auth error:', error.message);
+      return res.status(401).json({
         success: false,
-        error: error.message
+        error: 'Google authentication failed: ' + error.message
       });
     }
 
-    // Profile is auto-created by the database trigger (handle_new_user)
-    // Sign them in to get a token
-    const { data: signInData, error: signInError } = 
-      await supabaseAdmin.auth.signInWithPassword({
-        email,
-        password
-      });
+    const user = data.user;
 
-    if (signInError) {
-      // User was created but sign-in failed - still return success
-      return res.status(201).json({
-        success: true,
-        message: 'Account created. Please sign in.',
-        user: {
-          id: data.user.id,
-          email: data.user.email
-        }
-      });
+    // Ensure profile exists (created by handle_new_user trigger, but just in case)
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    if (!profile) {
+      // Create profile manually if trigger didn't fire
+      const fullName = user.user_metadata?.full_name || user.email?.split('@')[0] || 'User';
+      await supabaseAdmin
+        .from('profiles')
+        .insert({
+          id: user.id,
+          email: user.email,
+          full_name: fullName,
+          role: resolveRole(null, user.email)
+        });
     }
 
-    // Auto-join the default org for new users
-    try {
-      const { data: defaultOrg } = await supabaseAdmin
-        .from('orgs')
-        .select('id')
-        .eq('slug', 'default')
-        .single();
+    // Fetch user's orgs (may be empty — user won't see any content until admin adds them)
+    const { data: userOrgs } = await supabaseAdmin
+      .from('user_orgs')
+      .select('*, org:orgs(*)')
+      .eq('user_id', user.id);
 
-      if (defaultOrg) {
-        // Check if already a member
-        const { data: existingMembership } = await supabaseAdmin
-          .from('user_orgs')
-          .select('id')
-          .eq('user_id', data.user.id)
-          .eq('org_id', defaultOrg.id)
-          .maybeSingle();
-
-        if (!existingMembership) {
-          await supabaseAdmin
-            .from('user_orgs')
-            .insert({
-              user_id: data.user.id,
-              org_id: defaultOrg.id,
-              role: 'member'
-            });
-        }
-      }
-    } catch (orgErr) {
-      console.error('Auto-join default org error:', orgErr.message);
-      // Non-critical, don't fail registration
-    }
-
-    return res.status(201).json({
+    return res.json({
       success: true,
-      message: 'Account created successfully',
       session: {
-        access_token: signInData.session.access_token,
-        refresh_token: signInData.session.refresh_token,
-        expires_in: signInData.session.expires_in
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+        expires_in: data.session.expires_in
       },
       user: {
-        id: signInData.user.id,
-        email: signInData.user.email,
-        full_name: full_name || email.split('@')[0]
-      }
+        id: user.id,
+        email: user.email,
+        full_name: user.user_metadata?.full_name || user.email?.split('@')[0],
+        role: resolveRole(profile || null, user.email),
+        avatar_url: user.user_metadata?.avatar_url || null
+      },
+      organizations: userOrgs || []
     });
   } catch (err) {
-    console.error('Register error:', err);
+    console.error('Google auth error:', err);
     return res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Google authentication failed'
     });
   }
 });
@@ -193,7 +166,7 @@ router.post('/login', async (req, res) => {
         id: data.user.id,
         email: data.user.email,
         full_name: profile?.full_name || data.user.email?.split('@')[0],
-        role: profile?.role || 'member',
+        role: resolveRole(profile, data.user.email),
         avatar_url: profile?.avatar_url
       },
       organizations: userOrgs || []
@@ -278,7 +251,7 @@ router.get('/me', async (req, res) => {
         id: user.id,
         email: user.email,
         full_name: profile?.full_name || user.email?.split('@')[0],
-        role: profile?.role || 'member',
+        role: resolveRole(profile, user.email),
         avatar_url: profile?.avatar_url
       },
       organizations: userOrgs || []

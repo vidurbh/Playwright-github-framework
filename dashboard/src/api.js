@@ -109,12 +109,19 @@ export async function apiRequest(endpoint, options = {}) {
       });
     } catch (err) {
       console.error('Auth refresh failed:', err);
+      clearSession();
       throw new Error('Session expired');
     }
   }
 
-  const data = await response.json();
-  return data;
+  // Handle cases where the response might not be JSON (e.g. redirect)
+  const contentType = response.headers.get('content-type');
+  if (contentType && contentType.includes('application/json')) {
+    const data = await response.json();
+    return data;
+  }
+  
+  return { success: false, error: 'Unexpected response' };
 }
 
 /**
@@ -143,6 +150,23 @@ export const auth = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
+    });
+    const data = await response.json();
+    if (data.success) {
+      setSession(data.session);
+      localStorage.setItem('assertiq_user', JSON.stringify(data.user));
+      if (data.organizations?.length > 0) {
+        localStorage.setItem('selectedOrgId', data.organizations[0].org_id);
+      }
+    }
+    return data;
+  },
+
+  async googleSignIn(idToken) {
+    const response = await fetch(`${API_URL}/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: idToken })
     });
     const data = await response.json();
     if (data.success) {

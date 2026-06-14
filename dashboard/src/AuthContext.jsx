@@ -20,9 +20,8 @@ export function AuthProvider({ children }) {
         const storedUser = auth.getUser();
 
         if (session && storedUser) {
-          setUser(storedUser);
-
-          // Verify token is still valid
+          // Verify token is still valid by calling /auth/me
+          // This will auto-refresh the token if expired (api.js handles 401 refresh)
           try {
             const result = await auth.getMe();
             if (result.success) {
@@ -30,18 +29,24 @@ export function AuthProvider({ children }) {
               // Update stored user
               localStorage.setItem('assertiq_user', JSON.stringify(result.user));
             } else {
-              // Token invalid, try refresh
-              throw new Error('Token invalid');
+              // Token verification failed even after possible refresh
+              console.error('Auth verification failed:', result.error);
+              setUser(null);
+              auth.logout();
             }
           } catch {
-            // Token expired or invalid, try refresh via login
-            // If refresh fails, user needs to login again
+            // Token refresh failed or network error
+            // Check if we still have a valid session (refresh may have succeeded)
+            const refreshedSession = auth.getSession();
             const refreshedUser = auth.getUser();
-            if (refreshedUser) {
+            
+            if (refreshedSession && refreshedUser) {
+              // Session was refreshed - use the user data
               setUser(refreshedUser);
             } else {
+              // No valid session - log out
               setUser(null);
-              auth.logout(); // Clean up
+              auth.logout();
             }
           }
         }
@@ -74,6 +79,14 @@ export function AuthProvider({ children }) {
     return result;
   }, []);
 
+  const googleSignIn = useCallback(async (idToken) => {
+    const result = await auth.googleSignIn(idToken);
+    if (result.success) {
+      setUser({ ...result.user, organizations: result.organizations || [] });
+    }
+    return result;
+  }, []);
+
   const logout = useCallback(async () => {
     await auth.logout();
     setUser(null);
@@ -87,6 +100,7 @@ export function AuthProvider({ children }) {
     isAuthenticated: !!user,
     login,
     register,
+    googleSignIn,
     logout,
     setUser
   };

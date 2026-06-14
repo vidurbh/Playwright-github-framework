@@ -1,69 +1,76 @@
 /**
- * Auth Page - Login & Signup
- * Toggles between Login and Register modes
+ * Auth Page - Google Sign-In only
+ * Uses Google Identity Services for OAuth
  */
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './AuthContext';
 
 export default function AuthPage() {
-  const { login, register, loading: authLoading } = useAuth();
-
-  const [mode, setMode] = useState('login'); // 'login' | 'register'
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
+  const { googleSignIn, loading: authLoading } = useAuth();
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const googleBtnRef = useRef(null);
+  const initializedRef = useRef(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
 
-    if (!email.trim() || !password.trim()) {
-      setError('Email and password are required');
-      return;
-    }
+    // Load Google Identity Services script
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      if (window.google && googleBtnRef.current) {
+        window.google.accounts.id.initialize({
+          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
+          callback: handleGoogleResponse,
+          auto_select: false,
+          cancel_on_tap_outside: false
+        });
+        window.google.accounts.id.renderButton(
+          googleBtnRef.current,
+          { theme: 'outline', size: 'large', width: 320, text: 'signin_with', shape: 'pill' }
+        );
+      }
+    };
+    document.head.appendChild(script);
 
-    if (mode === 'register' && password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
+    return () => {
+      // Cleanup
+      const scriptEl = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+      if (scriptEl) document.head.removeChild(scriptEl);
+    };
+  }, []);
 
-    if (mode === 'register' && !fullName.trim()) {
-      setError('Full name is required');
+  const handleGoogleResponse = async (response) => {
+    if (!response?.credential) {
+      setError('Google sign-in failed: no credential received');
       return;
     }
 
     setSubmitting(true);
-    try {
-      let result;
-      if (mode === 'login') {
-        result = await login(email.trim(), password);
-      } else {
-        result = await register(email.trim(), password, fullName.trim());
-      }
+    setError('');
 
+    try {
+      const result = await googleSignIn(response.credential);
       if (!result.success) {
-        setError(result.error || 'Something went wrong');
+        setError(result.error || 'Sign-in failed. Please try again.');
       }
     } catch (err) {
-      setError(err.message || 'Connection error');
+      setError(err.message || 'Connection error. Please try again.');
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const switchMode = () => {
-    setMode(mode === 'login' ? 'register' : 'login');
-    setError('');
   };
 
   if (authLoading) {
     return (
       <div style={styles.container}>
         <div style={styles.loadingContainer}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>🧪</div>
-          <div style={{ color: '#888', fontSize: '16px' }}>Loading...</div>
+          <div className="loading-spinner" />
+          <div style={styles.loadingText}>Loading AssertIQ...</div>
         </div>
       </div>
     );
@@ -71,93 +78,64 @@ export default function AuthPage() {
 
   return (
     <div style={styles.container}>
+      <div style={styles.backgroundGlow} />
       <div style={styles.card}>
         {/* Logo */}
         <div style={styles.logoSection}>
-          <span style={{ fontSize: '48px' }}>🧪</span>
+          <div style={styles.logoIcon}>
+            <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+              <rect width="52" height="52" rx="14" fill="url(#logo-gradient)" />
+              <text x="26" y="34" textAnchor="middle" fill="white" fontSize="26" fontWeight="bold">🧪</text>
+              <defs>
+                <linearGradient id="logo-gradient" x1="0" y1="0" x2="52" y2="52">
+                  <stop offset="0%" stopColor="#2563eb" />
+                  <stop offset="100%" stopColor="#1d4ed8" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
           <h1 style={styles.title}>AssertIQ</h1>
-          <p style={styles.subtitle}>
-            {mode === 'login' 
-              ? 'Sign in to your account' 
-              : 'Create a new account'}
-          </p>
+          <p style={styles.subtitle}>AI-Powered Test Automation Platform</p>
         </div>
 
         {/* Error Message */}
         {error && (
           <div style={styles.errorBox}>
-            <span>⚠️</span> {error}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ff6b6b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span>{error}</span>
           </div>
         )}
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} style={styles.form}>
-          {mode === 'register' && (
-            <div style={styles.inputGroup}>
-              <label style={styles.label}>Full Name</label>
-              <input
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="John Doe"
-                style={styles.input}
-                autoFocus
-              />
+        {/* Google Sign-In Button */}
+        <div style={styles.buttonSection}>
+          <div ref={googleBtnRef} id="google-signin-button" style={styles.googleButton} />
+          {submitting && (
+            <div style={styles.submittingOverlay}>
+              <div className="loading-spinner small" />
+              <span style={{ fontSize: '14px', color: '#888' }}>Signing in...</span>
             </div>
           )}
+        </div>
 
-          <div style={styles.inputGroup}>
-            <label style={styles.label}>Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              style={styles.input}
-              autoFocus={mode === 'login'}
-            />
-          </div>
+        {/* Divider */}
+        <div style={styles.divider}>
+          <div style={styles.dividerLine} />
+          <span style={styles.dividerText}>secure access</span>
+          <div style={styles.dividerLine} />
+        </div>
 
-          <div style={styles.inputGroup}>
-            <label style={styles.label}>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              style={styles.input}
-            />
-            {mode === 'register' && (
-              <span style={styles.hint}>At least 6 characters</span>
-            )}
-          </div>
-
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{
-              ...styles.button,
-              opacity: submitting ? 0.6 : 1,
-              cursor: submitting ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {submitting 
-              ? (mode === 'login' ? 'Signing in...' : 'Creating account...') 
-              : (mode === 'login' ? 'Sign In' : 'Create Account')}
-          </button>
-        </form>
-
-        {/* Toggle Mode */}
-        <div style={styles.toggleSection}>
-          <span style={{ opacity: 0.6 }}>
-            {mode === 'login' ? "Don't have an account?" : 'Already have an account?'}
-          </span>
-          <button
-            onClick={switchMode}
-            style={styles.linkButton}
-          >
-            {mode === 'login' ? 'Sign Up' : 'Sign In'}
-          </button>
+        {/* Footer */}
+        <div style={styles.footer}>
+          <p style={styles.footerText}>
+            Sign in with your Google account to access AssertIQ.
+          </p>
+          <p style={styles.footerHint}>
+            Only authorized users can access this platform.
+          </p>
         </div>
       </div>
     </div>
@@ -170,112 +148,130 @@ const styles = {
     justifyContent: 'center',
     alignItems: 'center',
     minHeight: '100vh',
-    background: '#0f0f0f',
+    background: '#0a0a0f',
     color: 'white',
-    fontFamily: "'Segoe UI', Arial, sans-serif",
-    padding: '20px'
+    fontFamily: "'Inter', 'Segoe UI', Arial, sans-serif",
+    padding: '20px',
+    position: 'relative',
+    overflow: 'hidden'
+  },
+  backgroundGlow: {
+    position: 'absolute',
+    top: '20%',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: '600px',
+    height: '600px',
+    background: 'radial-gradient(circle, rgba(37,99,235,0.08) 0%, transparent 70%)',
+    pointerEvents: 'none'
   },
   loadingContainer: {
     textAlign: 'center'
   },
+  loadingText: {
+    marginTop: '16px',
+    color: '#888',
+    fontSize: '15px',
+    letterSpacing: '0.3px'
+  },
   card: {
     width: '100%',
-    maxWidth: '420px',
-    background: '#181818',
-    borderRadius: '16px',
-    border: '1px solid #2a2a2a',
-    padding: '40px 36px',
-    boxShadow: '0 20px 60px rgba(0,0,0,0.5)'
+    maxWidth: '400px',
+    background: '#121218',
+    borderRadius: '20px',
+    border: '1px solid #1e1e2a',
+    padding: '48px 36px',
+    boxShadow: '0 25px 80px rgba(0,0,0,0.6)',
+    position: 'relative',
+    backdropFilter: 'blur(10px)'
   },
   logoSection: {
     textAlign: 'center',
-    marginBottom: '32px'
+    marginBottom: '36px'
+  },
+  logoIcon: {
+    display: 'flex',
+    justifyContent: 'center',
+    marginBottom: '16px'
   },
   title: {
-    fontSize: '28px',
-    fontWeight: 'bold',
-    margin: '8px 0 4px 0'
+    fontSize: '30px',
+    fontWeight: 700,
+    margin: '0 0 6px 0',
+    letterSpacing: '-0.5px',
+    background: 'linear-gradient(135deg, #fff 0%, #94a3b8 100%)',
+    WebkitBackgroundClip: 'text',
+    WebkitTextFillColor: 'transparent'
   },
   subtitle: {
     fontSize: '14px',
-    opacity: 0.5,
-    margin: 0
+    color: '#64748b',
+    margin: 0,
+    fontWeight: 400
   },
   errorBox: {
     padding: '12px 16px',
-    background: '#3a1a1a',
-    border: '1px solid #ff444444',
-    borderRadius: '8px',
+    background: '#1a0f0f',
+    border: '1px solid rgba(255,68,68,0.2)',
+    borderRadius: '10px',
     color: '#ff6b6b',
     fontSize: '14px',
     marginBottom: '20px',
     display: 'flex',
     alignItems: 'center',
-    gap: '8px'
+    gap: '10px'
   },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px'
-  },
-  inputGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px'
-  },
-  label: {
-    fontSize: '12px',
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-    opacity: 0.6
-  },
-  input: {
-    width: '100%',
-    padding: '12px 14px',
-    borderRadius: '8px',
-    border: '1px solid #333',
-    background: '#111',
-    color: 'white',
-    fontSize: '14px',
-    boxSizing: 'border-box',
-    outline: 'none',
-    fontFamily: 'inherit',
-    transition: 'border-color 0.2s'
-  },
-  hint: {
-    fontSize: '11px',
-    opacity: 0.4,
-    marginTop: '2px'
-  },
-  button: {
-    width: '100%',
-    padding: '14px',
-    borderRadius: '10px',
-    border: 'none',
-    background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
-    color: 'white',
-    fontWeight: 600,
-    fontSize: '15px',
-    marginTop: '8px',
-    transition: 'all 0.2s'
-  },
-  toggleSection: {
-    textAlign: 'center',
-    marginTop: '24px',
-    fontSize: '14px',
+  buttonSection: {
+    position: 'relative',
     display: 'flex',
     justifyContent: 'center',
-    gap: '6px'
+    marginBottom: '28px',
+    minHeight: '50px'
   },
-  linkButton: {
-    background: 'none',
-    border: 'none',
-    color: '#3b82f6',
-    cursor: 'pointer',
-    fontWeight: 600,
-    fontSize: '14px',
-    padding: 0,
-    textDecoration: 'underline'
+  googleButton: {
+    display: 'flex',
+    justifyContent: 'center'
+  },
+  submittingOverlay: {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '10px',
+    background: 'rgba(18,18,24,0.8)',
+    borderRadius: '12px'
+  },
+  divider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    marginBottom: '24px'
+  },
+  dividerLine: {
+    flex: 1,
+    height: '1px',
+    background: '#1e1e2a'
+  },
+  dividerText: {
+    fontSize: '11px',
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: '1.5px',
+    fontWeight: 600
+  },
+  footer: {
+    textAlign: 'center'
+  },
+  footerText: {
+    margin: '0 0 6px 0',
+    fontSize: '13px',
+    color: '#64748b',
+    lineHeight: '1.5'
+  },
+  footerHint: {
+    margin: 0,
+    fontSize: '12px',
+    color: '#475569'
   }
 };

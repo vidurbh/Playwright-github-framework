@@ -4,6 +4,30 @@
  */
 const { createClient } = require('@supabase/supabase-js');
 
+// Parse admin email addresses from environment variable
+// Comma-separated list of emails that should always be treated as admin
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+  .split(',')
+  .map(e => e.trim().toLowerCase())
+  .filter(Boolean);
+
+/**
+ * Resolve the effective role for a user.
+ * If the user's email is in the ADMIN_EMAILS list, they always get 'admin' role,
+ * regardless of what the database says. This provides a production-safe override
+ * in case the database SQL scripts haven't been run.
+ */
+function resolveRole(profile, email) {
+  if (!email) return profile?.role || 'member';
+  
+  // Environment-level admin override takes precedence
+  if (ADMIN_EMAILS.includes(email.toLowerCase())) {
+    return 'admin';
+  }
+  
+  return profile?.role || 'member';
+}
+
 // Create a Supabase admin client (uses service_role key for auth verification)
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL,
@@ -20,6 +44,7 @@ const supabaseAdmin = createClient(
 const PUBLIC_ROUTES = [
   { method: 'POST', path: '/auth/register' },
   { method: 'POST', path: '/auth/login' },
+  { method: 'POST', path: '/auth/google' },
   { method: 'POST', path: '/auth/refresh' },
   { method: 'GET', path: '/' },
   { method: 'GET', path: '/health' }
@@ -71,6 +96,16 @@ async function authenticate(req, res, next) {
       .single();
 
     req.profile = profile || null;
+
+    // Compute effective role, applying the env-based admin override for known admin emails
+    const effectiveRole = resolveRole(req.profile, user.email);
+    if (req.profile) {
+      req.profile.role = effectiveRole;
+    } else {
+      // Create a minimal profile so the admin email override works
+      // even when no profiles table row exists yet
+      req.profile = { role: effectiveRole };
+    }
 
     next();
   } catch (err) {
@@ -160,5 +195,6 @@ module.exports = {
   requireAdmin,
   requireOrgAccess,
   getUserClient,
-  supabaseAdmin
+  supabaseAdmin,
+  resolveRole
 };

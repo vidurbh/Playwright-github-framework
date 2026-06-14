@@ -59,7 +59,9 @@ app.post('/trigger-tests', async (req, res) => {
     console.log("TOKEN EXISTS:", !!process.env.GITHUB_TOKEN);
     console.log("ORG_ID:", org_id);
 
-    // Resolve org_id: if none provided, look up the default org
+    // If no org_id provided, resolve to the default org's DB id
+    // The SQL migration assigned all existing runs to the default org, so
+    // "Default Org" in the UI maps to the default org's actual DB id.
     let resolvedOrgId = org_id;
     if (!resolvedOrgId) {
       const { data: defaultOrg } = await supabase
@@ -76,9 +78,11 @@ app.post('/trigger-tests', async (req, res) => {
     // This way parse-results can look it up later
     const pendingRunData = {
       status: 'triggered',
-      triggered_at: new Date().toISOString(),
-      org_id: resolvedOrgId
+      triggered_at: new Date().toISOString()
     };
+    if (resolvedOrgId) {
+      pendingRunData.org_id = resolvedOrgId;
+    }
     const { data: pendingRun, error: pendingError } = await supabase
       .from('test_runs')
       .insert([pendingRunData])
@@ -90,6 +94,14 @@ app.post('/trigger-tests', async (req, res) => {
       console.log('✅ Pending run saved with id:', pendingRun?.[0]?.id, 'org_id:', resolvedOrgId);
     }
 
+    // Pass org_id as workflow input so parse-results receives ORG_ID env var
+    const dispatchBody = {
+      ref: 'main'
+    };
+    if (resolvedOrgId) {
+      dispatchBody.inputs = { org_id: String(resolvedOrgId) };
+    }
+
     const response = await fetch(
       `https://api.github.com/repos/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}/actions/workflows/${WORKFLOW_ID}/dispatches`,
       {
@@ -99,9 +111,7 @@ app.post('/trigger-tests', async (req, res) => {
           Accept: 'application/vnd.github+json',
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          ref: 'main'
-        })
+        body: JSON.stringify(dispatchBody)
       }
     );
 
@@ -351,15 +361,225 @@ app.get('/orgs/:id/stats', async (req, res) => {
   }
 });
 
+/* ================================================================
+   MEMBER MANAGEMENT (Admin only)
+   ================================================================ */
+
+/* ---------- LIST PENDING USERS (users without any org) ---------- */
+
+app.get('/users/pending', async (req, res) => {
+  if (req.profile?.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+
+  try {
+    // Find users who have no entries in user_orgs
+    const { data, error } = await supabase
+      .from('profiles')
+      .select(`
+        id,
+        email,
+        full_name,
+        role,
+        created_at
+      `)
+      .not('id', 'in', (
+        supabase
+          .from('user_orgs')
+          .select('user_id')
+      ));
+
+    if (error) {
+      // Fallback: use a simpler query since 'not in' with subquery may not work in all Supabase versions
+      // Get all profiles and all memberships, then filter client-side
+      const { data: allProfiles } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, role, created_at')
+        .order('created_at', { ascending: false });
+
+      const { data: allMemberships } = await supabase
+        .from('user_orgs')
+        .select('user_id');
+
+      const memberUserIds = new Set((allMemberships || []).map(m => m.user_id));
+      const pendingUsers = (allProfiles || []).filter(p => !memberUserIds.has(p.id));
+
+      return res.json({ success: true, users: pendingUsers });
+    }
+
+    res.json({ success: true, users: data || [] });
+  } catch (err) {
+    // Final fallback: separate queries
+    try {
+      const { data: allProfiles } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, role, created_at')
+        .order('created_at', { ascending: false });
+
+      const { data: allMemberships } = await supabase
+        .from('user_orgs')
+        .select('user_id');
+
+      const memberUserIds = new Set((allMemberships || []).map(m => m.user_id));
+      const pendingUsers = (allProfiles || []).filter(p => !memberUserIds.has(p.id));
+
+      return res.json({ success: true, users: pendingUsers });
+    } catch (fallbackErr) {
+      return res.status(500).json({ success: false, error: fallbackErr.message });
+    }
+  }
+});
+
+/* ---------- LIST ORG MEMBERS ---------- */
+
+app.get('/orgs/:id/members', async (req, res) => {
+  if (req.profile?.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from('user_orgs')
+      .select('id, user_id, role, created_at, profile:profiles(id, email, full_name)')
+      .eq('org_id', id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.json({ success: true, members: data || [] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/* ---------- ADD USER TO ORG ---------- */
+
+app.post('/orgs/:id/members', async (req, res) => {
+  if (req.profile?.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+
+  try {
+    const { id } = req.params;
+    const { user_id, role } = req.body;
+
+    if (!user_id) {
+      return res.status(400).json({ success: false, error: 'user_id is required' });
+    }
+
+    // Check if already a member
+    const { data: existing } = await supabase
+      .from('user_orgs')
+      .select('id')
+      .eq('user_id', user_id)
+      .eq('org_id', id)
+      .maybeSingle();
+
+    if (existing) {
+      return res.status(409).json({ success: false, error: 'User is already a member of this organization' });
+    }
+
+    const { data, error } = await supabase
+      .from('user_orgs')
+      .insert([{
+        user_id,
+        org_id: parseInt(id),
+        role: role || 'member'
+      }])
+      .select('id, user_id, role, profile:profiles(id, email, full_name)');
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.json({ success: true, member: data[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/* ---------- REMOVE USER FROM ORG ---------- */
+
+app.delete('/orgs/:id/members/:userId', async (req, res) => {
+  if (req.profile?.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+
+  try {
+    const { id, userId } = req.params;
+
+    const { error } = await supabase
+      .from('user_orgs')
+      .delete()
+      .eq('org_id', id)
+      .eq('user_id', userId);
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.json({ success: true, message: 'Member removed from organization' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 /* ---------------- TEST RUNS FROM SUPABASE ---------------- */
 
 app.get('/test-runs', async (req, res) => {
   try {
-    const { org_id } = req.query;
+    const { org_id, page: pageStr, limit: limitStr } = req.query;
+    const page = Math.max(1, parseInt(pageStr, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(limitStr, 10) || 10));
+    const offset = (page - 1) * limit;
+
+    const isAdmin = req.profile?.role === 'admin';
+    const userId = req.user.id;
+
+    // Resolve which org(s) the user has access to
+    let accessibleOrgIds = null; // null = admin can access all
+
+    if (!isAdmin) {
+      // Non-admin users: fetch their org memberships
+      const { data: memberships } = await supabase
+        .from('user_orgs')
+        .select('org_id')
+        .eq('user_id', userId);
+
+      if (!memberships || memberships.length === 0) {
+        return res.json({
+          success: true,
+          runs: [],
+          total: 0,
+          page,
+          limit,
+          totalPages: 0
+        });
+      }
+
+      accessibleOrgIds = memberships.map(m => m.org_id);
+
+      // If a specific org_id is requested, verify the user belongs to it
+      if (org_id) {
+        const requestedOrgId = parseInt(org_id, 10);
+        if (!accessibleOrgIds.includes(requestedOrgId)) {
+          return res.status(403).json({
+            success: false,
+            error: 'You do not have access to this organization\'s test runs'
+          });
+        }
+      }
+    }
 
     // Reconciliation: find any pending "triggered" runs and try to match them
     // with orphaned completed runs (inserted by CI without org_id).
     // This handles the case where CI runs old code that doesn't include org_id.
+    // NOTE: We do NOT delete pending runs here, because CI's parse-results may
+    // still need to find them. Instead, we just update orphan runs' org_id.
     try {
       const { data: pendingRuns } = await supabase
         .from('test_runs')
@@ -388,12 +608,6 @@ app.get('/test-runs', async (req, res) => {
                 .update({ org_id: pending.org_id })
                 .eq('id', orphan.id);
 
-              // Delete the pending triggered marker
-              await supabase
-                .from('test_runs')
-                .delete()
-                .eq('id', pending.id);
-
               console.log(`🔄 Reconciled run ${orphan.id} -> org ${pending.org_id}`);
             }
           }
@@ -403,23 +617,85 @@ app.get('/test-runs', async (req, res) => {
       console.error('Reconciliation error:', reconErr.message);
     }
 
-    let query = supabase
-      .from('test_runs')
-      .select('*')
-      .order('id', { ascending: false })
-      .limit(10);
-
-    if (org_id) {
-      query = query.eq('org_id', org_id);
+    // Resolve org_id: if no org_id specified, determine scope based on user role
+    let resolvedOrgId = org_id;
+    if (!resolvedOrgId) {
+      if (!isAdmin && accessibleOrgIds) {
+        // Non-admin users see runs from ALL orgs they belong to
+        // Skip resolving to default org — use their membership list instead
+        const { data: defaultOrg } = await supabase
+          .from('orgs')
+          .select('id')
+          .eq('slug', 'default')
+          .single();
+        if (defaultOrg && accessibleOrgIds.includes(defaultOrg.id)) {
+          // User is member of default org, resolve to that (preserves existing behavior)
+          resolvedOrgId = defaultOrg.id;
+        }
+        // If user is NOT a member of default org, leave resolvedOrgId null
+        // and filter by their accessible orgs below
+      } else {
+        // Admin or no org context: resolve to the default org's db id
+        // This is because the SQL migration assigned all existing runs to the default org's id.
+        const { data: defaultOrg } = await supabase
+          .from('orgs')
+          .select('id')
+          .eq('slug', 'default')
+          .single();
+        if (defaultOrg) {
+          resolvedOrgId = defaultOrg.id;
+        }
+      }
     }
 
-    const { data, error } = await query;
+    // Build query for count
+    let countQuery = supabase
+      .from('test_runs')
+      .select('id', { count: 'exact', head: true });
+
+    // Build query for data
+    let dataQuery = supabase
+      .from('test_runs')
+      .select('*')
+      .order('id', { ascending: false });
+
+    if (resolvedOrgId) {
+      // Filter to a specific org (including default)
+      countQuery = countQuery.eq('org_id', resolvedOrgId);
+      dataQuery = dataQuery.eq('org_id', resolvedOrgId);
+    } else if (!isAdmin && accessibleOrgIds) {
+      // Non-admin without explicit org: show runs from all their accessible orgs
+      countQuery = countQuery.in('org_id', accessibleOrgIds);
+      dataQuery = dataQuery.in('org_id', accessibleOrgIds);
+    } else {
+      // Fallback: only show runs without any org_id
+      countQuery = countQuery.is('org_id', null);
+      dataQuery = dataQuery.is('org_id', null);
+    }
+
+    // Apply pagination to data query
+    dataQuery = dataQuery.range(offset, offset + limit - 1);
+
+    // Execute both queries
+    const [{ count: total }, { data, error }] = await Promise.all([
+      countQuery,
+      dataQuery
+    ]);
 
     if (error) {
       return res.status(500).json({ success: false, error: error.message });
     }
 
-    return res.json({ success: true, runs: data });
+    const totalPages = Math.ceil((total || 0) / limit);
+
+    return res.json({
+      success: true,
+      runs: data || [],
+      total: total || 0,
+      page,
+      limit,
+      totalPages
+    });
   } catch (err) {
     console.error('Supabase error:', err);
     return res.status(500).json({ success: false, error: err.message });
