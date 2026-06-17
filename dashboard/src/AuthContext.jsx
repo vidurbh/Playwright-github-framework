@@ -20,34 +20,41 @@ export function AuthProvider({ children }) {
         const storedUser = auth.getUser();
 
         if (session && storedUser) {
-          // Verify token is still valid by calling /auth/me
-          // This will auto-refresh the token if expired (api.js handles 401 refresh)
+          // Step 1: Proactively refresh the token BEFORE calling /auth/me
+          // This ensures we always use a fresh token, avoiding the
+          // "Auth session missing!" / "token is expired" errors from the backend.
+          let freshSession = session;
+          try {
+            const refreshResult = await auth.refresh();
+            if (refreshResult.success && refreshResult.session?.access_token) {
+              freshSession = refreshResult.session;
+            }
+          } catch {
+            // Refresh might fail if the refresh_token is also expired.
+            // We'll try /auth/me anyway - it might still work.
+          }
+
+          // Step 2: Get fresh user data from backend (includes latest role from DB)
           try {
             const result = await auth.getMe();
             if (result.success) {
+              // Backend is the single source of truth for user data (role, name, etc.)
               setUser(result.user);
-              // Update stored user
               localStorage.setItem('assertiq_user', JSON.stringify(result.user));
-            } else {
-              // Token verification failed even after possible refresh
-              console.error('Auth verification failed:', result.error);
-              setUser(null);
-              auth.logout();
+              return;
             }
           } catch {
-            // Token refresh failed or network error
-            // Check if we still have a valid session (refresh may have succeeded)
-            const refreshedSession = auth.getSession();
-            const refreshedUser = auth.getUser();
-            
-            if (refreshedSession && refreshedUser) {
-              // Session was refreshed - use the user data
-              setUser(refreshedUser);
-            } else {
-              // No valid session - log out
-              setUser(null);
-              auth.logout();
-            }
+            // getMe failed even after refresh - likely network error or invalid session
+            console.warn('Could not verify session with backend');
+          }
+
+          // Step 3: Fall back to stored user data (keeps app functional)
+          // Role may be stale from cache, but better than logging the user out.
+          const cachedUser = auth.getUser();
+          if (cachedUser) {
+            setUser(cachedUser);
+          } else {
+            setUser(null);
           }
         }
       } catch (err) {
@@ -82,6 +89,17 @@ export function AuthProvider({ children }) {
   const googleSignIn = useCallback(async (idToken) => {
     const result = await auth.googleSignIn(idToken);
     if (result.success) {
+      // Always re-fetch from /auth/me to get the true role from the database
+      try {
+        const meResult = await auth.getMe();
+        if (meResult.success) {
+          setUser(meResult.user);
+          localStorage.setItem('assertiq_user', JSON.stringify(meResult.user));
+          return { ...result, user: meResult.user };
+        }
+      } catch (e) {
+        console.warn('Could not refresh user after login, using login response', e);
+      }
       setUser({ ...result.user, organizations: result.organizations || [] });
     }
     return result;

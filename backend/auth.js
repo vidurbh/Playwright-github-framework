@@ -4,38 +4,34 @@
  */
 const { createClient } = require('@supabase/supabase-js');
 
-// Parse admin email addresses from environment variable
-// Comma-separated list of emails that should always be treated as admin
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
-  .split(',')
-  .map(e => e.trim().toLowerCase())
-  .filter(Boolean);
-
 /**
  * Resolve the effective role for a user.
- * If the user's email is in the ADMIN_EMAILS list, they always get 'admin' role,
- * regardless of what the database says. This provides a production-safe override
- * in case the database SQL scripts haven't been run.
+ * Uses the database profile role as the single source of truth.
+ * Admins are managed through the database, not environment variables.
  */
 function resolveRole(profile, email) {
-  if (!email) return profile?.role || 'member';
-  
-  // Environment-level admin override takes precedence
-  if (ADMIN_EMAILS.includes(email.toLowerCase())) {
-    return 'admin';
-  }
-  
   return profile?.role || 'member';
 }
 
-// Create a Supabase admin client (uses service_role key for auth verification)
+// Create a Supabase admin client using the service_role key.
+// The service_role key MUST bypass RLS. However, due to a common Supabase issue,
+// some RLS policies (like infinite recursion on profiles) still block it.
+// Fix: Pass the service key as the anon_key and inject it in the Authorization header
+// to ensure RLS bypass works correctly with supabase-js.
+const serviceKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY,
+  serviceKey,
   {
     auth: {
       autoRefreshToken: false,
       persistSession: false
+    },
+    global: {
+      headers: {
+        // Explicitly send the service role key as the auth header to guarantee RLS bypass
+        Authorization: `Bearer ${serviceKey}`
+      }
     }
   }
 );
@@ -89,21 +85,20 @@ async function authenticate(req, res, next) {
     req.user = user;
 
     // Also fetch profile data
-    const { data: profile } = await supabaseAdmin
+    const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
       .select('*')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();  // Use maybeSingle instead of single to avoid errors on no results
 
     req.profile = profile || null;
 
-    // Compute effective role, applying the env-based admin override for known admin emails
+    // Compute effective role from the database profile
     const effectiveRole = resolveRole(req.profile, user.email);
     if (req.profile) {
       req.profile.role = effectiveRole;
     } else {
-      // Create a minimal profile so the admin email override works
-      // even when no profiles table row exists yet
+      // Create a minimal profile even when no profiles table row exists yet
       req.profile = { role: effectiveRole };
     }
 
@@ -152,7 +147,7 @@ async function requireOrgAccess(req, res, next) {
       .select('*')
       .eq('user_id', req.user.id)
       .eq('org_id', orgId)
-      .single();
+      .maybeSingle();
 
     if (!membership) {
       return res.status(403).json({ 
