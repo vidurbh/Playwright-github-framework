@@ -430,6 +430,41 @@ app.get('/users/pending', async (req, res) => {
   }
 });
 
+/* ---------- UPDATE USER GLOBAL ROLE (admin only) ---------- */
+
+app.patch('/users/:id/role', async (req, res) => {
+  if (req.profile?.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+
+    if (!role || !['admin', 'member', 'viewer'].includes(role)) {
+      return res.status(400).json({ success: false, error: 'Valid role is required (admin, member, or viewer)' });
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ role, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id, email, full_name, role');
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    res.json({ success: true, user: data[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 /* ---------- LIST ORG MEMBERS ---------- */
 
 app.get('/orgs/:id/members', async (req, res) => {

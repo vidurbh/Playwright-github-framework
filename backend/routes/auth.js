@@ -213,45 +213,37 @@ router.post('/logout', async (req, res) => {
  */
 router.get('/me', async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // req.user and req.profile are set by the authenticate middleware
+    // No need to re-verify the token - the middleware already did that.
+    // We use req.profile directly since the middleware already fetched it.
+    if (!req.user) {
       return res.status(401).json({
         success: false,
         error: 'Not authenticated'
       });
     }
 
-    const token = authHeader.split(' ')[1];
+    const userId = req.user.id;
+    const userEmail = req.user.email;
 
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
-
-    if (error || !user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid or expired token'
-      });
-    }
-
-    // Fetch profile
-    const { data: profile } = await supabaseAdmin
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
+    // Use the profile the middleware already fetched (single source of truth).
+    // The middleware fetches profiles.id = auth.users.id on every request.
+    // This avoids a redundant DB call and potential inconsistencies.
+    const profile = req.profile || null;
 
     // Fetch user's orgs
     const { data: userOrgs } = await supabaseAdmin
       .from('user_orgs')
       .select('*, org:orgs(*)')
-      .eq('user_id', user.id);
+      .eq('user_id', userId);
 
     return res.json({
       success: true,
       user: {
-        id: user.id,
-        email: user.email,
-        full_name: profile?.full_name || user.email?.split('@')[0],
-        role: resolveRole(profile, user.email),
+        id: userId,
+        email: userEmail,
+        full_name: profile?.full_name || userEmail?.split('@')[0],
+        role: resolveRole(profile, userEmail),
         avatar_url: profile?.avatar_url
       },
       organizations: userOrgs || []

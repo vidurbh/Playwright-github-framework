@@ -198,6 +198,34 @@ export const auth = {
     return apiRequest('/auth/me');
   },
 
+  /**
+   * Proactively refresh the access token
+   * Call this before making API calls to avoid token expiry errors
+   */
+  async refresh() {
+    const refresh_token = getRefreshToken();
+    if (!refresh_token) {
+      return { success: false, error: 'No refresh token' };
+    }
+
+    const response = await fetch(`${API_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token })
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      const currentSession = JSON.parse(localStorage.getItem('assertiq_session') || '{}');
+      setSession({
+        ...currentSession,
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token
+      });
+    }
+    return data;
+  },
+
   getSession() {
     try {
       return JSON.parse(localStorage.getItem('assertiq_session') || 'null');
