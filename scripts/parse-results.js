@@ -70,8 +70,8 @@ artifactUrl = await uploadFile(
   }
 
   // 4. Final payload for DB
-  // Always use GitHub Pages URL for the report link
-  const finalReportUrl = 'https://vidurbh.github.io/Playwright-github-framework/';
+  // Use the unique Supabase Storage URL for the uploaded HTML report
+  // so each run links to its own report, not a shared GitHub Pages URL
   const runData = {
     passed,
     failed,
@@ -80,7 +80,7 @@ artifactUrl = await uploadFile(
     duration,
     branch,
     commit_sha,
-    report_url: finalReportUrl,
+    report_url: reportUrl,
     status: 'completed'
   };
 
