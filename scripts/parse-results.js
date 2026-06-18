@@ -8,6 +8,11 @@ const {
 } = require('./supabase');
 async function run() {
   // 1. Read Playwright JSON report
+// Verify Supabase client is configured
+  console.log('🔍 Supabase URL configured:', !!process.env.SUPABASE_URL);
+  console.log('🔍 Supabase KEY configured:', !!(process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY));
+  console.log('🔍 ORG_ID:', process.env.ORG_ID || '(not set)');
+
   const reportPath = 'playwright-report.json';
 
   if (!fs.existsSync(reportPath)) {
@@ -72,7 +77,6 @@ artifactUrl = await uploadFile(
     failed,
     flaky,
     total,
-    duration_ms: duration,
     duration,
     branch,
     commit_sha,

@@ -683,16 +683,30 @@ app.get('/test-runs', async (req, res) => {
       }
     }
 
+    // Clean up stale "triggered" records that are older than 2 hours
+    // These are zombie records from workflow dispatches that never completed
+    try {
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      await supabase
+        .from('test_runs')
+        .update({ status: 'orphaned' })
+        .eq('status', 'triggered')
+        .lt('created_at', twoHoursAgo);
+    } catch (cleanupErr) {
+      console.error('Cleanup error:', cleanupErr.message);
+    }
+
     // Build query for count
     let countQuery = supabase
       .from('test_runs')
       .select('id', { count: 'exact', head: true });
 
     // Build query for data
+    // Order by created_at descending — latest runs always on top regardless of status
     let dataQuery = supabase
       .from('test_runs')
       .select('*')
-      .order('id', { ascending: false });
+      .order('created_at', { ascending: false });
 
     if (resolvedOrgId) {
       // Filter to a specific org (including default)
