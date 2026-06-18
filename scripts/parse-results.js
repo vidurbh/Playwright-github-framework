@@ -70,8 +70,8 @@ artifactUrl = await uploadFile(
   }
 
   // 4. Final payload for DB
-  // Use the uploaded report URL if available, otherwise fall back to GitHub Pages
-  const finalReportUrl = reportUrl || 'https://vidurbh.github.io/Playwright-github-framework/';
+  // Always use GitHub Pages URL for the report link
+  const finalReportUrl = 'https://vidurbh.github.io/Playwright-github-framework/';
   const runData = {
     passed,
     failed,
