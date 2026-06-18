@@ -41,16 +41,22 @@ async function run() {
     duration
   });
 
-  // 2. Upload HTML report (if exists)
+  // 2. Upload full Playwright report folder as a zip
+  // The HTML report is an SPA that needs data/ and trace/ subfolders,
+  // so we must zip the entire directory to preserve all dependencies.
   let reportUrl = null;
 
-  const htmlReportPath = 'playwright-report/index.html';
-  if (fs.existsSync(htmlReportPath)) {
+  const reportDirPath = 'playwright-report';
+  if (fs.existsSync(reportDirPath)) {
+    const zipPath = `report-${Date.now()}.zip`;
+    await zipFolder(reportDirPath, zipPath);
     reportUrl = await uploadFile(
-      htmlReportPath,
-      `reports/report-${Date.now()}.html`
+      zipPath,
+      `reports/report-${Date.now()}.zip`
     );
-    console.log('📄 Report uploaded:', reportUrl);
+    // Clean up the temporary zip file
+    try { fs.unlinkSync(zipPath); } catch {}
+    console.log('📄 Report zip uploaded:', reportUrl);
   }
 
   // 3. Upload videos/screenshots folder (optional simple zip-style upload)
@@ -59,19 +65,19 @@ async function run() {
   const testResultsPath = 'test-results';
   if (fs.existsSync(testResultsPath)) {
     const zipPath = `test-results-${Date.now()}.zip`;
-
-await zipFolder('test-results', zipPath);
-
-artifactUrl = await uploadFile(
-  zipPath,
-  `artifacts/artifact-${Date.now()}.zip`
-);;
+    await zipFolder('test-results', zipPath);
+    artifactUrl = await uploadFile(
+      zipPath,
+      `artifacts/artifact-${Date.now()}.zip`
+    );
+    // Clean up the temporary zip file
+    try { fs.unlinkSync(zipPath); } catch {}
     console.log('📦 Artifacts uploaded:', artifactUrl);
   }
 
   // 4. Final payload for DB
-  // Use the unique Supabase Storage URL for the uploaded HTML report
-  // so each run links to its own report, not a shared GitHub Pages URL
+  // Use the unique Supabase Storage URL for the uploaded report zip
+  // so each run links to its own complete report, not a shared GitHub Pages URL
   const runData = {
     passed,
     failed,
