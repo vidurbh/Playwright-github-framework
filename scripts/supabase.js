@@ -5,9 +5,11 @@ const { createClient } = require('@supabase/supabase-js');
 const archiver = require('archiver');
 const fs = require('fs');
 
+// Use SERVICE_KEY as primary, then fallback to KEY for compatibility
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
+  supabaseKey
 );
 
 // ------------------------
@@ -39,18 +41,16 @@ async function saveTestRun(data) {
     .from('test_runs')
     .select('id, org_id')
     .eq('status', 'triggered')
-    .order('id', { ascending: false })
+    .order('triggered_at', { ascending: false })
     .limit(1);
 
   if (!fetchError && pendingRuns && pendingRuns.length > 0) {
     // Update the pending run with actual results, preserving org_id from trigger
     const pendingRun = pendingRuns[0];
     const updateData = { ...data };
-    delete updateData.org_id; // keep the org_id from the trigger
-    // If the pending run already has org_id, use it; otherwise use what was passed
-    if (pendingRun.org_id) {
-      updateData.org_id = pendingRun.org_id;
-    }
+    delete updateData.org_id; // Start fresh on org_id
+    // Use org_id from pending run (set at trigger time), falling back to the one from data
+    updateData.org_id = pendingRun.org_id || data.org_id || null;
 
     const { error: updateError } = await supabase
       .from('test_runs')

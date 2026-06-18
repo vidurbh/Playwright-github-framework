@@ -595,7 +595,18 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...runs].sort((a, b) => new Date(b.created_at || b.triggered_at || 0) - new Date(a.created_at || a.triggered_at || 0)).map((run) => (
+                  {[...runs].sort((a, b) => {
+                    // Sort by created_at descending (newest first)
+                    // Use triggered_at as fallback for pending runs
+                    const aDate = a.created_at || a.triggered_at;
+                    const bDate = b.created_at || b.triggered_at;
+                    if (!aDate && !bDate) return 0;
+                    if (!aDate) return 1;
+                    if (!bDate) return -1;
+                    // Convert space-separated timestamp to ISO for reliable Date parsing
+                    const normalizeDate = (d) => d.replace(' ', 'T') + (d.includes('+') || d.endsWith('Z') ? '' : 'Z');
+                    return new Date(normalizeDate(bDate)).getTime() - new Date(normalizeDate(aDate)).getTime();
+                  }).map((run) => (
                     <tr key={run.id} style={{ borderBottom: '1px solid #1a1a24', transition: 'background 0.15s' }}>
                       <td style={{ color: '#475569', fontSize: '12px' }}>#{run.id}</td>
                       <td style={{ fontSize: '13px', color: '#94a3b8', whiteSpace: 'nowrap' }}>
