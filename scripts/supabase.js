@@ -1,5 +1,6 @@
 require('dotenv').config();
 global.WebSocket = require('ws');
+const path = require('path');
 
 const { createClient } = require('@supabase/supabase-js');
 const archiver = require('archiver');
@@ -86,7 +87,7 @@ async function insertFallback(data) {
 // ------------------------
 // Upload file
 // ------------------------
-async function uploadFile(filePath, fileName) {
+async function uploadFile(filePath, fileName, contentType) {
   if (!fs.existsSync(filePath)) {
     console.error('❌ File not found:', filePath);
     return null;
@@ -94,11 +95,30 @@ async function uploadFile(filePath, fileName) {
 
   const file = fs.readFileSync(filePath);
 
+  // Auto-detect content type from file extension if not provided
+  if (!contentType) {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes = {
+      '.html': 'text/html',
+      '.htm': 'text/html',
+      '.zip': 'application/zip',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.json': 'application/json',
+      '.txt': 'text/plain',
+      '.css': 'text/css',
+      '.js': 'application/javascript',
+    };
+    contentType = mimeTypes[ext] || 'application/octet-stream';
+  }
+
   const { error } = await supabase
     .storage
     .from('test-artifacts')
     .upload(fileName, file, {
-      contentType: 'application/octet-stream',
+      contentType,
       upsert: true
     });
 
